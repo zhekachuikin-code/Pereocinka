@@ -282,9 +282,55 @@ progress.bar::-webkit-progress-value{background:var(--accent);border-radius:3px;
   .stat-row{grid-template-columns:repeat(2,1fr);}
 }
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+
+/* ── LOCK SCREEN ── */
+#lockScreen{
+  position:fixed;inset:0;z-index:999;background:var(--bg);
+  display:flex;align-items:center;justify-content:center;
+  background-image:
+    linear-gradient(var(--border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border) 1px, transparent 1px);
+  background-size:64px 64px;
+}
+#lockScreen .lock-card{
+  width:100%;max-width:340px;padding:28px 26px;background:var(--panel);
+  border:1px solid var(--border);border-radius:12px;text-align:center;
+}
+#lockScreen .brand-mark{margin:0 auto 14px;}
+#lockScreen h2{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:16px;margin-bottom:4px;}
+#lockScreen p.sub{font-size:12px;color:var(--text-dim);margin-bottom:18px;}
+#lockScreen input[type=password]{
+  width:100%;background:var(--bg);border:1px solid var(--border2);border-radius:7px;
+  color:var(--text);padding:11px 12px;font-family:'IBM Plex Mono',monospace;font-size:14px;
+  outline:none;text-align:center;letter-spacing:2px;margin-bottom:12px;
+}
+#lockScreen input[type=password]:focus{border-color:var(--accent-dim);}
+#lockScreen .lock-err{color:var(--danger);font-size:11.5px;min-height:16px;margin-bottom:8px;}
+#lockScreen.shake .lock-card{animation:lockShake .35s;}
+@keyframes lockShake{
+  0%,100%{transform:translateX(0);}
+  20%{transform:translateX(-8px);}
+  40%{transform:translateX(8px);}
+  60%{transform:translateX(-5px);}
+  80%{transform:translateX(5px);}
+}
+body.locked{overflow:hidden;}
+body.locked .app{display:none;}
 </style>
 </head>
-<body>
+<body class="locked">
+
+<div id="lockScreen">
+  <div class="lock-card">
+    <div class="brand-mark">П</div>
+    <h2>Переоцінка — доступ обмежено</h2>
+    <p class="sub">Введіть пароль, щоб продовжити</p>
+    <input type="password" id="lockPasswordInput" placeholder="Пароль" autocomplete="off">
+    <div class="lock-err" id="lockErr"></div>
+    <button class="btn primary" id="lockSubmitBtn" style="width:100%;justify-content:center;">Увійти</button>
+  </div>
+</div>
+
 <div class="app">
 
   <div class="topbar">
@@ -513,6 +559,55 @@ progress.bar::-webkit-progress-value{background:var(--accent);border-radius:3px;
 <div class="toast" id="toast"><span class="dot"></span><span id="toastText"></span></div>
 
 <script>
+/* ============================================================
+   ACCESS LOCK (client-side deterrent, NOT real security — the
+   hash below is visible to anyone who reads this file's source)
+   ============================================================ */
+const LOCK_HASH = 'ef08bdcc6c6766d5fc62b7117562673f4639bc42a049f314b2ec107be06d3533';
+const LOCK_STORAGE_KEY = 'pereotsinka_unlocked_v1';
+
+async function sha256Hex(str){
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
+function unlockApp(){
+  document.body.classList.remove('locked');
+  document.getElementById('lockScreen').style.display = 'none';
+}
+
+(function initLock(){
+  if(localStorage.getItem(LOCK_STORAGE_KEY) === '1'){
+    unlockApp();
+  }
+})();
+
+const lockScreen = document.getElementById('lockScreen');
+const lockInput = document.getElementById('lockPasswordInput');
+const lockErr = document.getElementById('lockErr');
+const lockSubmitBtn = document.getElementById('lockSubmitBtn');
+
+async function tryUnlock(){
+  const val = lockInput.value;
+  if(!val){ return; }
+  lockSubmitBtn.disabled = true;
+  const hash = await sha256Hex(val);
+  if(hash === LOCK_HASH){
+    try{ localStorage.setItem(LOCK_STORAGE_KEY, '1'); }catch(e){}
+    unlockApp();
+  }else{
+    lockErr.textContent = 'Невірний пароль';
+    lockScreen.classList.add('shake');
+    setTimeout(()=>lockScreen.classList.remove('shake'), 350);
+    lockInput.value = '';
+    lockInput.focus();
+    lockSubmitBtn.disabled = false;
+  }
+}
+lockSubmitBtn.addEventListener('click', tryUnlock);
+lockInput.addEventListener('keydown', e=>{ if(e.key==='Enter') tryUnlock(); });
+if(document.body.classList.contains('locked')){ lockInput.focus(); }
+
 /* ============================================================
    STATE (base is auto-persisted to IndexedDB — see BASE PERSISTENCE)
    ============================================================ */
