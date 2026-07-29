@@ -514,7 +514,7 @@ progress.bar::-webkit-progress-value{background:var(--accent);border-radius:3px;
 
 <script>
 /* ============================================================
-   STATE (in-memory only — no localStorage/sessionStorage)
+   STATE (base is auto-persisted to IndexedDB — see BASE PERSISTENCE)
    ============================================================ */
 const state = {
   baseList: [],            // [{code,name,price,opt,retail,optMarkup,retailMarkup,currency}]
@@ -526,6 +526,73 @@ const state = {
   serverUrl: 'https://gemini-api-server-dnzk.onrender.com/api/generate',
   aiTopN: 5,
 };
+
+/* ============================================================
+   BASE PERSISTENCE (IndexedDB — remembers the last imported base)
+   ============================================================ */
+const BASE_DB_NAME = 'pereotsinka_db';
+const BASE_STORE = 'base';
+const BASE_KEY = 'last';
+
+function openBaseDB(){
+  return new Promise((resolve, reject)=>{
+    const req = indexedDB.open(BASE_DB_NAME, 1);
+    req.onupgradeneeded = ()=>{
+      req.result.createObjectStore(BASE_STORE);
+    };
+    req.onsuccess = ()=>resolve(req.result);
+    req.onerror = ()=>reject(req.error);
+  });
+}
+async function saveBaseToDB(list, fileName, loadedAt){
+  try{
+    const db = await openBaseDB();
+    await new Promise((resolve, reject)=>{
+      const tx = db.transaction(BASE_STORE, 'readwrite');
+      tx.objectStore(BASE_STORE).put({list, fileName, loadedAt: loadedAt.toISOString()}, BASE_KEY);
+      tx.oncomplete = resolve;
+      tx.onerror = ()=>reject(tx.error);
+    });
+    db.close();
+  }catch(e){ console.warn('Не вдалося зберегти базу в IndexedDB:', e); }
+}
+async function loadBaseFromDB(){
+  try{
+    const db = await openBaseDB();
+    const data = await new Promise((resolve, reject)=>{
+      const tx = db.transaction(BASE_STORE, 'readonly');
+      const req = tx.objectStore(BASE_STORE).get(BASE_KEY);
+      req.onsuccess = ()=>resolve(req.result || null);
+      req.onerror = ()=>reject(req.error);
+    });
+    db.close();
+    return data;
+  }catch(e){ console.warn('Не вдалося прочитати базу з IndexedDB:', e); return null; }
+}
+async function clearBaseInDB(){
+  try{
+    const db = await openBaseDB();
+    await new Promise((resolve, reject)=>{
+      const tx = db.transaction(BASE_STORE, 'readwrite');
+      tx.objectStore(BASE_STORE).delete(BASE_KEY);
+      tx.oncomplete = resolve;
+      tx.onerror = ()=>reject(tx.error);
+    });
+    db.close();
+  }catch(e){ console.warn('Не вдалося очистити базу в IndexedDB:', e); }
+}
+async function restoreLastBase(){
+  const data = await loadBaseFromDB();
+  if(!data || !Array.isArray(data.list) || data.list.length===0) return;
+  const map = new Map();
+  data.list.forEach(item=>map.set(item.code, item));
+  state.baseList = data.list;
+  state.baseMap = map;
+  state.baseFileName = data.fileName || '';
+  state.baseLoadedAt = data.loadedAt ? new Date(data.loadedAt) : null;
+  refreshBaseUI();
+  toast(`Відновлено останню базу: ${data.list.length.toLocaleString('uk-UA')} товарів (${data.fileName||''})`);
+}
 
 /* ============================================================
    UTIL
@@ -704,6 +771,7 @@ function handleBaseFile(file){
       logTo('baseLog', `Готово. Завантажено ${list.length.toLocaleString('uk-UA')} товарів з листа «${sheetName}».`, 'ok');
       if(usedFallback) logTo('baseLog', 'Заголовки колонок не розпізнано напряму — використано позиційну відповідність (A–E).');
       toast(`База оновлена: ${list.length.toLocaleString('uk-UA')} товарів`);
+      saveBaseToDB(list, file.name, state.baseLoadedAt);
     }catch(err){
       console.error(err);
       logTo('baseLog', 'Помилка читання файлу: '+err.message, 'err');
@@ -726,6 +794,7 @@ document.getElementById('clearBaseBtn').addEventListener('click', ()=>{
   if(!confirm('Очистити всю базу товарів?')) return;
   state.baseList = []; state.baseMap = new Map(); state.baseFileName=''; state.baseLoadedAt=null;
   refreshBaseUI(); clearLog('baseLog'); toast('Базу очищено');
+  clearBaseInDB();
 });
 
 document.getElementById('baseSearch').addEventListener('input', e=>renderBaseTable(e.target.value));
@@ -1409,6 +1478,7 @@ document.getElementById('aiAllBtn').addEventListener('click', async ()=>{
 /* init */
 refreshBaseUI();
 renderResults();
+restoreLastBase();
 </script>
 </body>
 </html>
