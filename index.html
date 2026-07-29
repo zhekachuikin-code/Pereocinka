@@ -356,7 +356,7 @@ progress.bar::-webkit-progress-value{background:var(--accent);border-radius:3px;
       <div class="card-head">
         <div>
           <div class="card-title"><span class="dot"></span>Новий прайс-лист</div>
-          <div class="card-sub">Список товарів з новими цінами від постачальника</div>
+          <div class="card-sub">Кожен постачальник веде прайс по-своєму — структуру колонок ви вкажете самі на кроці нижче. Код товару необов'язковий: рядки без коду (або з кодом, якого немає в базі) підуть на підбір за назвою.</div>
         </div>
       </div>
 
@@ -366,26 +366,61 @@ progress.bar::-webkit-progress-value{background:var(--accent);border-radius:3px;
       </div>
 
       <div class="src-body active" id="src-paste">
-        <label class="field-label">Код — Назва — Ціна (через Tab, по рядку на товар)</label>
-        <textarea id="pricePasteArea" rows="10" placeholder="0010027270&#9;Водонагрівач проточний VED E 21/8 B&#9;299.00
-BO4600&#9;Тройник 32x1&quot;x32 (В.О.)&#9;3.60"></textarea>
-        <div class="hint">Скопіюйте діапазон з Excel (Код, Назва, Ціна) і вставте в поле — Tab-роздільник розпізнається автоматично.</div>
+        <label class="field-label">Вставте діапазон з Excel (будь-які колонки, у будь-якому порядку)</label>
+        <textarea id="pricePasteArea" rows="8" placeholder="Водонагрівач проточний VED E 21/8 B&#9;0010027270&#9;299.00&#9;шт
+Тройник 32x1&quot;x32 (В.О.)&#9;&#9;3.60&#9;шт"></textarea>
+        <div class="hint">Не важливо, чи є заголовки, чи є колонка коду, чи в якому порядку йдуть колонки — це ви налаштуєте нижче.</div>
+        <div class="btn-row" style="margin-top:12px;">
+          <button class="btn primary" id="pasteContinueBtn">Продовжити →</button>
+        </div>
       </div>
 
       <div class="src-body" id="src-file">
         <div class="dropzone" id="priceDropzone">
           <div class="ic">⇩</div>
-          <p>Перетягніть .xlsx з листом «Прайс», або <b style="color:var(--accent);">натисніть, щоб обрати файл</b></p>
+          <p>Перетягніть .xlsx / .csv від постачальника, або <b style="color:var(--accent);">натисніть, щоб обрати файл</b></p>
           <p style="margin-top:4px;" id="priceFileHint"></p>
         </div>
-        <input type="file" id="priceFileInput" accept=".xlsx,.xls,.xlsm">
+        <input type="file" id="priceFileInput" accept=".xlsx,.xls,.xlsm,.csv">
       </div>
 
-      <div class="btn-row" style="margin-top:16px;">
+      <div class="log" id="priceLog"></div>
+    </div>
+
+    <!-- Column mapping card -->
+    <div class="card" id="mappingCard" style="display:none;">
+      <div class="card-head">
+        <div>
+          <div class="card-title"><span class="dot"></span>Яка колонка що означає?</div>
+          <div class="card-sub">Вкажіть відповідність для кожної колонки. Колонка «Ціна» обов'язкова; потрібна хоча б одна з «Код» або «Назва».</div>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-muted);cursor:pointer;">
+          <input type="checkbox" id="hasHeaderCheck" style="width:15px;height:15px;">
+          Перший рядок — заголовки
+        </label>
+      </div>
+      <div class="table-wrap" style="max-height:340px;">
+        <table id="mappingTable"></table>
+      </div>
+      <div class="hint" id="mappingHint" style="margin-top:10px;"></div>
+      <div class="btn-row" style="margin-top:14px;">
+        <button class="btn primary" id="applyMappingBtn">Застосувати колонки</button>
+        <button class="btn ghost" id="cancelMappingBtn">Скасувати</button>
+      </div>
+    </div>
+
+    <div class="card" id="priceReadyCard" style="display:none;">
+      <div class="card-head">
+        <div>
+          <div class="card-title"><span class="dot"></span>Прайс готовий до порівняння</div>
+          <div class="card-sub" id="priceReadySummary"></div>
+        </div>
+      </div>
+      <div class="btn-row">
         <button class="btn primary" id="compareBtn">Порівняти ціни →</button>
+        <button class="btn ghost" id="remapBtn">Змінити зіставлення колонок</button>
         <button class="btn ghost" id="clearPriceBtn">Очистити прайс</button>
       </div>
-      <div class="log" id="priceLog"></div>
     </div>
   </section>
 
@@ -698,8 +733,15 @@ function escapeHtml(s){
 }
 
 /* ============================================================
-   PRICE LIST INPUT
+   PRICE LIST INPUT — raw ingestion (paste or file) → column mapping
+   Suppliers format their price lists however they like: code column
+   may be absent, may have gaps, columns may be in any order/name.
+   So we never guess blindly — we show the user their real columns
+   with a live preview and let them tag each one.
    ============================================================ */
+state.priceRawRows = [];      // raw 2D array of strings/values as loaded
+state.priceMapping = { code:-1, name:-1, price:-1 };
+
 const priceDropzone = document.getElementById('priceDropzone');
 const priceFileInput = document.getElementById('priceFileInput');
 priceDropzone.addEventListener('click', ()=>priceFileInput.click());
@@ -716,28 +758,14 @@ function handlePriceFile(file){
     try{
       const data = new Uint8Array(e.target.result);
       const wb = XLSX.read(data, {type:'array'});
-      let sheetName = wb.SheetNames.find(n=>normalize(n).includes('прайс')||normalize(n).includes('прайс-лист')) || wb.SheetNames[0];
+      let sheetName = wb.SheetNames.find(n=>normalize(n).includes('прайс')) || wb.SheetNames[0];
       const ws = wb.Sheets[sheetName];
-      const rows = XLSX.utils.sheet_to_json(ws, {header:1, raw:true, defval:''});
-      if(rows.length<2){ logTo('priceLog','Файл порожній.','err'); return; }
-      const header = rows[0];
-      let iCode = findHeaderIndex(header, ['код','артикул','номенклатура']);
-      let iName = findHeaderIndex(header, ['найм','назв','характеристик']);
-      let iPrice = findHeaderIndex(header, ['гурт','опт','цін','цен']);
-      if(iCode<0||iPrice<0){ iCode=0; iName=1; iPrice=2; }
-      const list = [];
-      for(let r=1;r<rows.length;r++){
-        const row = rows[r]; if(!row) continue;
-        const code = String(row[iCode]||'').trim();
-        const price = parseNum(row[iPrice]);
-        if(!code && isNaN(price)) continue;
-        list.push({code, name: iName>=0?String(row[iName]||'').trim():'', price: isNaN(price)?0:price});
-      }
-      document.getElementById('priceFileHint').innerHTML = `Файл: <span class="fn">${escapeHtml(file.name)}</span> — ${list.length} рядків`;
-      state.priceRows = list;
-      document.getElementById('priceCountPill').textContent = list.length;
-      logTo('priceLog', `Розпізнано ${list.length} товарів з листа «${sheetName}».`, 'ok');
-      toast(`Прайс завантажено: ${list.length} товарів`);
+      const rows = XLSX.utils.sheet_to_json(ws, {header:1, raw:true, defval:''})
+        .filter(row=>row.some(c=>String(c).trim()!==''));
+      if(rows.length<1){ logTo('priceLog','Файл порожній.','err'); return; }
+      document.getElementById('priceFileHint').innerHTML = `Файл: <span class="fn">${escapeHtml(file.name)}</span>, лист «${escapeHtml(sheetName)}» — ${rows.length} рядків`;
+      logTo('priceLog', `Прочитано ${rows.length} рядків з листа «${sheetName}». Вкажіть колонки нижче.`, 'ok');
+      openMapping(rows, true);
     }catch(err){
       console.error(err);
       logTo('priceLog', 'Помилка читання файлу: '+err.message, 'err');
@@ -746,29 +774,198 @@ function handlePriceFile(file){
   reader.readAsArrayBuffer(file);
 }
 
-function parsePasteArea(){
+document.getElementById('pasteContinueBtn').addEventListener('click', ()=>{
   const raw = document.getElementById('pricePasteArea').value;
-  const lines = raw.split('\n').map(l=>l.trim()).filter(Boolean);
-  const list = [];
-  for(const line of lines){
-    const parts = line.split('\t').map(s=>s.trim());
-    let cols = parts;
-    if(cols.length<2) cols = line.split(/ {2,}/).map(s=>s.trim());
-    if(cols.length<2) continue;
-    let code, name, price;
-    if(cols.length>=3){ code=cols[0]; name=cols[1]; price=parseNum(cols[2]); }
-    else { code=cols[0]; name=''; price=parseNum(cols[1]); }
-    if(!code) continue;
-    list.push({code, name, price: isNaN(price)?0:price});
+  const lines = raw.split('\n').map(l=>l.replace(/\r$/,'')).filter(l=>l.trim()!=='');
+  if(lines.length===0){ toast('Вставте дані прайсу', true); return; }
+  const rows = lines.map(line=>{
+    let cols = line.split('\t');
+    if(cols.length<2) cols = line.split(/ {2,}/);
+    return cols.map(s=>s.trim());
+  });
+  clearLog('priceLog');
+  logTo('priceLog', `Розпізнано ${rows.length} рядків. Вкажіть колонки нижче.`, 'ok');
+  openMapping(rows, false);
+});
+
+function guessColumnType(rows, headerRow, colIdx, hasHeader){
+  // header-keyword guess first
+  if(hasHeader && headerRow){
+    const h = normalize(headerRow[colIdx]);
+    if(h){
+      if((h.includes('код')||h.includes('артикул')||h.includes('sku')) && !h.includes('назв')) return 'code';
+      if(h.includes('найм')||h.includes('назв')||h.includes('характеристик')||h.includes('товар')) return 'name';
+      if(h.includes('гурт')||h.includes('опт')||h.includes('цін')||h.includes('цен')||h.includes('price')) return 'price';
+    }
   }
-  return list;
+  // content-based guess from sample data rows
+  const start = hasHeader ? 1 : 0;
+  const sample = rows.slice(start, start+25).map(r=>String(r[colIdx]??'').trim()).filter(Boolean);
+  if(sample.length===0) return '';
+  const numericCount = sample.filter(v=>!isNaN(parseNum(v)) && parseNum(v)>0 && /^[\d\s.,]+$/.test(v)).length;
+  if(numericCount/sample.length > 0.7) return 'price';
+  const avgLen = sample.reduce((a,v)=>a+v.length,0)/sample.length;
+  const shortAlnumCount = sample.filter(v=>v.length<=16 && /^[A-Za-zА-Яа-яЁёІіЇїЄє0-9\-\/\.]+$/.test(v)).length;
+  if(avgLen<16 && shortAlnumCount/sample.length>0.6) return 'code';
+  if(avgLen>=10) return 'name';
+  return '';
 }
+
+function openMapping(rows, hasHeaderGuess){
+  state.priceRawRows = rows;
+  document.getElementById('hasHeaderCheck').checked = !!hasHeaderGuess;
+  document.getElementById('mappingCard').style.display='block';
+  document.getElementById('priceReadyCard').style.display='none';
+  renderMappingUI();
+  document.getElementById('mappingCard').scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+document.getElementById('hasHeaderCheck').addEventListener('change', renderMappingUI);
+
+function renderMappingUI(){
+  const rows = state.priceRawRows;
+  if(!rows || rows.length===0) return;
+  const hasHeader = document.getElementById('hasHeaderCheck').checked;
+  const headerRow = hasHeader ? rows[0] : null;
+  const colCount = Math.max(...rows.map(r=>r.length));
+  const dataStart = hasHeader ? 1 : 0;
+  const previewRows = rows.slice(dataStart, dataStart+5);
+
+  // guess mapping once per open (only if not already chosen)
+  const mapping = state.priceMapping;
+  const guesses = [];
+  for(let c=0;c<colCount;c++) guesses.push(guessColumnType(rows, headerRow, c, hasHeader));
+  if(mapping.code===-1 && mapping.name===-1 && mapping.price===-1){
+    const gc = guesses.indexOf('code');
+    const gn = guesses.indexOf('name');
+    const gp = guesses.indexOf('price');
+    mapping.code = gc; mapping.name = gn; mapping.price = gp;
+  }
+
+  const table = document.getElementById('mappingTable');
+  let html = '<thead><tr>';
+  for(let c=0;c<colCount;c++){
+    const label = hasHeader && headerRow[c] ? String(headerRow[c]) : `Колонка ${c+1}`;
+    html += `<th style="min-width:150px;">
+        <div style="margin-bottom:6px;color:var(--text-muted);font-weight:600;">${escapeHtml(label)}</div>
+        <select class="map-select" data-col="${c}" style="width:100%;background:var(--bg);border:1px solid var(--border2);border-radius:6px;color:var(--text);padding:6px 8px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;">
+          <option value="">— ігнорувати —</option>
+          <option value="code" ${mapping.code===c?'selected':''}>Код товару</option>
+          <option value="name" ${mapping.name===c?'selected':''}>Назва товару</option>
+          <option value="price" ${mapping.price===c?'selected':''}>Ціна (нова)</option>
+        </select>
+      </th>`;
+  }
+  html += '</tr></thead><tbody>';
+  previewRows.forEach(row=>{
+    html += '<tr>';
+    for(let c=0;c<colCount;c++){
+      html += `<td class="mono" style="color:var(--text-muted);">${escapeHtml(row[c]??'')||'<span style="color:var(--text-dim)">—</span>'}</td>`;
+    }
+    html += '</tr>';
+  });
+  html += '</tbody>';
+  table.innerHTML = html;
+
+  table.querySelectorAll('.map-select').forEach(sel=>{
+    sel.addEventListener('change', ()=>{
+      const col = parseInt(sel.dataset.col,10);
+      const role = sel.value;
+      // unset this role from any other column first
+      if(role==='code') mapping.code = col;
+      if(role==='name') mapping.name = col;
+      if(role==='price') mapping.price = col;
+      if(role===''){
+        if(mapping.code===col) mapping.code=-1;
+        if(mapping.name===col) mapping.name=-1;
+        if(mapping.price===col) mapping.price=-1;
+      }
+      // clear duplicate assignment on other selects
+      table.querySelectorAll('.map-select').forEach(other=>{
+        const otherCol = parseInt(other.dataset.col,10);
+        if(otherCol===col) return;
+        if(role && other.value===role){
+          other.value='';
+          if(role==='code' && mapping.code===otherCol) mapping.code=-1;
+          if(role==='name' && mapping.name===otherCol) mapping.name=-1;
+          if(role==='price' && mapping.price===otherCol) mapping.price=-1;
+        }
+      });
+      updateMappingHint();
+    });
+  });
+  updateMappingHint();
+}
+
+function updateMappingHint(){
+  const m = state.priceMapping;
+  const hint = document.getElementById('mappingHint');
+  const applyBtn = document.getElementById('applyMappingBtn');
+  const problems = [];
+  if(m.price<0) problems.push('оберіть колонку «Ціна»');
+  if(m.code<0 && m.name<0) problems.push('оберіть хоча б одну з колонок «Код» або «Назва» (потрібно для зіставлення з базою)');
+  if(problems.length){
+    hint.innerHTML = '⚠ '+problems.join('; ')+'.';
+    hint.style.color = 'var(--danger)';
+    applyBtn.disabled = true;
+  }else{
+    hint.innerHTML = m.code<0
+      ? 'Колонки коду немає — усі товари підуть на зіставлення за назвою (локальний пошук + ШІ).'
+      : 'Рядки без значення в колонці коду також будуть направлені на зіставлення за назвою.';
+    hint.style.color = 'var(--text-dim)';
+    applyBtn.disabled = false;
+  }
+}
+
+document.getElementById('cancelMappingBtn').addEventListener('click', ()=>{
+  document.getElementById('mappingCard').style.display='none';
+  state.priceRawRows = [];
+});
+document.getElementById('remapBtn').addEventListener('click', ()=>{
+  document.getElementById('priceReadyCard').style.display='none';
+  document.getElementById('mappingCard').style.display='block';
+  renderMappingUI();
+});
+
+document.getElementById('applyMappingBtn').addEventListener('click', ()=>{
+  const rows = state.priceRawRows;
+  const hasHeader = document.getElementById('hasHeaderCheck').checked;
+  const m = state.priceMapping;
+  const dataStart = hasHeader ? 1 : 0;
+  const list = [];
+  let noCodeCount = 0;
+  for(let r=dataStart;r<rows.length;r++){
+    const row = rows[r];
+    if(!row) continue;
+    const code = m.code>=0 ? String(row[m.code]??'').trim() : '';
+    const name = m.name>=0 ? String(row[m.name]??'').trim() : '';
+    const priceRaw = m.price>=0 ? row[m.price] : '';
+    const price = parseNum(priceRaw);
+    if(!code && !name) continue;             // completely empty row
+    if(isNaN(price)) continue;                 // no usable price — skip
+    if(!code) noCodeCount++;
+    list.push({code, name, price});
+  }
+  if(list.length===0){ toast('Не вдалося зібрати жодного рядка з обраними колонками', true); return; }
+
+  state.priceRows = list;
+  document.getElementById('priceCountPill').textContent = list.length;
+  document.getElementById('mappingCard').style.display='none';
+  document.getElementById('priceReadyCard').style.display='block';
+  document.getElementById('priceReadySummary').textContent =
+    `${list.length} товарів готово до порівняння` + (noCodeCount>0 ? ` · без коду: ${noCodeCount} (підуть на зіставлення за назвою)` : '');
+  toast(`Прайс готовий: ${list.length} товарів`);
+});
 
 document.getElementById('clearPriceBtn').addEventListener('click', ()=>{
   document.getElementById('pricePasteArea').value='';
   state.priceRows = [];
+  state.priceRawRows = [];
+  state.priceMapping = { code:-1, name:-1, price:-1 };
   document.getElementById('priceCountPill').textContent = '0';
   document.getElementById('priceFileHint').textContent = '';
+  document.getElementById('priceReadyCard').style.display='none';
+  document.getElementById('mappingCard').style.display='none';
   clearLog('priceLog');
   toast('Прайс очищено');
 });
@@ -778,19 +975,16 @@ document.getElementById('clearPriceBtn').addEventListener('click', ()=>{
    ============================================================ */
 document.getElementById('compareBtn').addEventListener('click', ()=>{
   if(state.baseList.length===0){ toast('Спочатку імпортуйте базу товарів (крок 1)', true); goToTab('base'); return; }
-
-  const pasteActive = document.getElementById('src-paste').classList.contains('active');
-  let rows = pasteActive ? parsePasteArea() : state.priceRows;
-
+  const rows = state.priceRows;
   if(!rows || rows.length===0){ toast('Немає даних прайсу для порівняння', true); return; }
 
   const results = [];
   for(const pr of rows){
-    const base = state.baseMap.get(pr.code);
+    const base = pr.code ? state.baseMap.get(pr.code) : null;
     if(!base){
-      results.push(buildResultRow(pr.code, pr.name, pr.price, null));
+      results.push(buildResultRow(pr.code, pr.name, pr.price, null, !pr.code));
     }else{
-      results.push(buildResultRow(pr.code, base.name || pr.name, pr.price, base));
+      results.push(buildResultRow(pr.code, base.name || pr.name, pr.price, base, false));
     }
   }
   state.results = results;
@@ -799,13 +993,13 @@ document.getElementById('compareBtn').addEventListener('click', ()=>{
   toast(`Порівняно ${results.length} товарів`);
 });
 
-function buildResultRow(code, name, newPrice, base){
+function buildResultRow(code, name, newPrice, base, noCode){
   if(!base){
     return {
       code, name, newPrice,
       newOpt:null, newRetail:null, currency:'',
       basePrice:null, pct:null,
-      status:'notfound',
+      status:'notfound', noCode: !!noCode,
       aiCandidates:null, aiChecked:false,
     };
   }
@@ -816,7 +1010,7 @@ function buildResultRow(code, name, newPrice, base){
     code, name, newPrice,
     newOpt, newRetail, currency: base.currency,
     basePrice: base.price, pct,
-    status:'ok',
+    status:'ok', noCode:false,
     aiCandidates:null, aiChecked:false,
   };
 }
@@ -866,7 +1060,9 @@ function renderResults(){
           </div>
         </div>`;
     }else{
-      statusHtml = '<span class="status-chip notfound">✕ не знайдено</span>';
+      statusHtml = r.noCode
+        ? '<span class="status-chip notfound">⚠ без коду</span>'
+        : '<span class="status-chip notfound">✕ код не знайдено</span>';
       actionHtml = `<button class="btn small" data-act="ai-one" data-idx="${idx}">✦ ШІ підбір</button>`;
     }
 
