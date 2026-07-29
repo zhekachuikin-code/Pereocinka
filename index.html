@@ -403,6 +403,16 @@ progress.bar::-webkit-progress-value{background:var(--accent);border-radius:3px;
         <table id="mappingTable"></table>
       </div>
       <div class="hint" id="mappingHint" style="margin-top:10px;"></div>
+      <div style="margin-top:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--panel2);border:1px solid var(--border2);border-radius:8px;padding:12px 14px;">
+        <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-muted);cursor:pointer;">
+          <input type="checkbox" id="priceDiscountCheck" style="width:15px;height:15px;">
+          Наша ціна = ціна з прайсу мінус знижка
+        </label>
+        <div id="priceDiscountWrap" style="display:none;align-items:center;gap:8px;">
+          <input type="text" id="priceDiscountInput" inputmode="decimal" placeholder="15" style="width:70px;text-align:right;">
+          <span style="color:var(--text-dim);font-size:12.5px;">% знижки на весь прайс</span>
+        </div>
+      </div>
       <div class="btn-row" style="margin-top:14px;">
         <button class="btn primary" id="applyMappingBtn">Застосувати колонки</button>
         <button class="btn ghost" id="cancelMappingBtn">Скасувати</button>
@@ -451,7 +461,7 @@ progress.bar::-webkit-progress-value{background:var(--accent);border-radius:3px;
       <div class="table-wrap">
         <table>
           <thead><tr>
-            <th>Код</th><th>Назва</th><th>Нова ціна</th><th>Нова опт</th><th>Нова розн.</th><th>Δ до бази</th><th>Статус</th><th></th>
+            <th>Код</th><th>Назва</th><th>Ціна прайсу</th><th>Знижка</th><th>Ціна закупівлі</th><th>Нова опт</th><th>Нова розн.</th><th>Δ до бази</th><th>Статус</th><th></th>
           </tr></thead>
           <tbody id="resultTableBody"></tbody>
         </table>
@@ -742,6 +752,12 @@ function escapeHtml(s){
    ============================================================ */
 state.priceRawRows = [];      // raw 2D array of strings/values as loaded
 state.priceMapping = { code:-1, name:-1, price:-1 };
+state.priceDiscountPct = 0;   // % знижки постачальника, застосовується до всього прайсу
+
+document.getElementById('priceDiscountCheck').addEventListener('change', e=>{
+  document.getElementById('priceDiscountWrap').style.display = e.target.checked ? 'flex' : 'none';
+  if(!e.target.checked) document.getElementById('priceDiscountInput').value = '';
+});
 
 const priceDropzone = document.getElementById('priceDropzone');
 const priceFileInput = document.getElementById('priceFileInput');
@@ -817,6 +833,9 @@ function openMapping(rows, hasHeaderGuess){
   document.getElementById('hasHeaderCheck').checked = !!hasHeaderGuess;
   document.getElementById('mappingCard').style.display='block';
   document.getElementById('priceReadyCard').style.display='none';
+  document.getElementById('priceDiscountCheck').checked = false;
+  document.getElementById('priceDiscountWrap').style.display = 'none';
+  document.getElementById('priceDiscountInput').value = '';
   renderMappingUI();
   document.getElementById('mappingCard').scrollIntoView({behavior:'smooth', block:'nearest'});
 }
@@ -933,6 +952,13 @@ document.getElementById('applyMappingBtn').addEventListener('click', ()=>{
   const hasHeader = document.getElementById('hasHeaderCheck').checked;
   const m = state.priceMapping;
   const dataStart = hasHeader ? 1 : 0;
+
+  const discountOn = document.getElementById('priceDiscountCheck').checked;
+  let discountPct = discountOn ? parseNum(document.getElementById('priceDiscountInput').value) : 0;
+  if(isNaN(discountPct)) discountPct = 0;
+  discountPct = Math.min(Math.max(discountPct, 0), 100);
+  state.priceDiscountPct = discountOn ? discountPct : 0;
+
   const list = [];
   let noCodeCount = 0;
   for(let r=dataStart;r<rows.length;r++){
@@ -941,11 +967,12 @@ document.getElementById('applyMappingBtn').addEventListener('click', ()=>{
     const code = m.code>=0 ? String(row[m.code]??'').trim() : '';
     const name = m.name>=0 ? String(row[m.name]??'').trim() : '';
     const priceRaw = m.price>=0 ? row[m.price] : '';
-    const price = parseNum(priceRaw);
+    const listPrice = parseNum(priceRaw);
     if(!code && !name) continue;             // completely empty row
-    if(isNaN(price)) continue;                 // no usable price — skip
+    if(isNaN(listPrice)) continue;             // no usable price — skip
     if(!code) noCodeCount++;
-    list.push({code, name, price});
+    const price = state.priceDiscountPct>0 ? listPrice*(1-state.priceDiscountPct/100) : listPrice;
+    list.push({code, name, price, listPrice, discountPct: state.priceDiscountPct});
   }
   if(list.length===0){ toast('Не вдалося зібрати жодного рядка з обраними колонками', true); return; }
 
@@ -954,7 +981,7 @@ document.getElementById('applyMappingBtn').addEventListener('click', ()=>{
   document.getElementById('mappingCard').style.display='none';
   document.getElementById('priceReadyCard').style.display='block';
   document.getElementById('priceReadySummary').textContent =
-    `${list.length} товарів готово до порівняння` + (noCodeCount>0 ? ` · без коду: ${noCodeCount} (підуть на зіставлення за назвою)` : '');
+    `${list.length} товарів готово до порівняння` + (noCodeCount>0 ? ` · без коду: ${noCodeCount} (підуть на зіставлення за назвою)` : '') + (state.priceDiscountPct>0 ? ` · знижка ${state.priceDiscountPct}% застосована` : '');
   toast(`Прайс готовий: ${list.length} товарів`);
 });
 
@@ -963,6 +990,10 @@ document.getElementById('clearPriceBtn').addEventListener('click', ()=>{
   state.priceRows = [];
   state.priceRawRows = [];
   state.priceMapping = { code:-1, name:-1, price:-1 };
+  state.priceDiscountPct = 0;
+  document.getElementById('priceDiscountCheck').checked = false;
+  document.getElementById('priceDiscountWrap').style.display = 'none';
+  document.getElementById('priceDiscountInput').value = '';
   document.getElementById('priceCountPill').textContent = '0';
   document.getElementById('priceFileHint').textContent = '';
   document.getElementById('priceReadyCard').style.display='none';
@@ -983,9 +1014,9 @@ document.getElementById('compareBtn').addEventListener('click', ()=>{
   for(const pr of rows){
     const base = pr.code ? state.baseMap.get(pr.code) : null;
     if(!base){
-      results.push(buildResultRow(pr.code, pr.name, pr.price, null, !pr.code));
+      results.push(buildResultRow(pr.code, pr.name, pr.price, null, !pr.code, pr.listPrice, pr.discountPct));
     }else{
-      results.push(buildResultRow(pr.code, base.name || pr.name, pr.price, base, false));
+      results.push(buildResultRow(pr.code, base.name || pr.name, pr.price, base, false, pr.listPrice, pr.discountPct));
     }
   }
   state.results = results;
@@ -997,10 +1028,12 @@ document.getElementById('compareBtn').addEventListener('click', ()=>{
 const DEFAULT_OPT_MARKUP = 1.2;    // +20% опт за замовчуванням
 const DEFAULT_RETAIL_MARKUP = 1.3; // +30% роздріб за замовчуванням
 
-function buildResultRow(code, name, newPrice, base, noCode){
+function buildResultRow(code, name, newPrice, base, noCode, listPrice, discountPct){
+  if(listPrice===undefined) listPrice = newPrice;
+  if(discountPct===undefined) discountPct = 0;
   if(!base){
     return {
-      code, name, newPrice,
+      code, name, newPrice, listPrice, discountPct,
       newOpt: newPrice * DEFAULT_OPT_MARKUP,
       newRetail: newPrice * DEFAULT_RETAIL_MARKUP,
       currency:'',
@@ -1016,7 +1049,7 @@ function buildResultRow(code, name, newPrice, base, noCode){
   const newRetail = newPrice * (hasRetailMarkup ? base.retailMarkup : DEFAULT_RETAIL_MARKUP);
   const pct = base.price>0 ? ((newPrice - base.price)/base.price*100) : null;
   return {
-    code, name, newPrice,
+    code, name, newPrice, listPrice, discountPct,
     newOpt, newRetail, currency: base.currency,
     basePrice: base.price, pct,
     status:'ok', noCode:false,
@@ -1079,6 +1112,8 @@ function renderResults(){
     tr.innerHTML = `
       <td class="mono code-cell">${escapeHtml(r.code)}</td>
       <td>${escapeHtml(r.name)||'<span style=\"color:var(--text-dim)\">—</span>'}</td>
+      <td class="mono">${fmtNum(r.listPrice)}</td>
+      <td class="mono">${r.discountPct>0?('-'+r.discountPct+'%'):'—'}</td>
       <td class="mono">${fmtNum(r.newPrice)}</td>
       <td class="mono">${r.newOpt!==null?fmtNum(r.newOpt):'—'}${r.defaultMarkup?'<span title="Стандартна націнка +20% (немає даних в базі)" style="color:var(--up);">*</span>':''}</td>
       <td class="mono">${r.newRetail!==null?fmtNum(r.newRetail):'—'}${r.defaultMarkup?'<span title="Стандартна націнка +30% (немає даних в базі)" style="color:var(--up);">*</span>':''}</td>
@@ -1138,7 +1173,9 @@ document.getElementById('exportBtn').addEventListener('click', ()=>{
     const rows = found.map(r=>({
       'Код': r.code,
       'Назва': r.name,
-      'Нова ціна': r.newPrice,
+      'Ціна прайсу': r.listPrice,
+      'Знижка, %': r.discountPct||0,
+      'Ціна закупівлі': Math.round(r.newPrice*100)/100,
       'Опт. ціна': r.newOpt!==null?Math.round(r.newOpt*100)/100:'',
       'Розн. ціна': r.newRetail!==null?Math.round(r.newRetail*100)/100:'',
       'Валюта': r.currency||'',
@@ -1146,7 +1183,7 @@ document.getElementById('exportBtn').addEventListener('click', ()=>{
       'Статус': 'Знайдено',
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
-    ws['!cols'] = [{wch:16},{wch:50},{wch:12},{wch:12},{wch:12},{wch:9},{wch:10},{wch:22}];
+    ws['!cols'] = [{wch:16},{wch:50},{wch:12},{wch:10},{wch:14},{wch:12},{wch:12},{wch:9},{wch:10},{wch:22}];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Переоцінка');
     const fname = `Переоцінка_${dateStr}.xlsx`;
@@ -1158,7 +1195,9 @@ document.getElementById('exportBtn').addEventListener('click', ()=>{
     const rows = notFound.map(r=>({
       'Код': r.code,
       'Назва': r.name,
-      'Ціна з прайсу': r.newPrice,
+      'Ціна прайсу': r.listPrice,
+      'Знижка, %': r.discountPct||0,
+      'Ціна закупівлі': Math.round(r.newPrice*100)/100,
       'Опт. ціна (станд. +20%)': r.newOpt!==null?Math.round(r.newOpt*100)/100:'',
       'Розн. ціна (станд. +30%)': r.newRetail!==null?Math.round(r.newRetail*100)/100:'',
       'Статус': r.noCode
@@ -1166,7 +1205,7 @@ document.getElementById('exportBtn').addEventListener('click', ()=>{
         : (r.status==='ai' ? 'ШІ-підбір (не підтверджено)' : 'Не знайдено в базі'),
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
-    ws['!cols'] = [{wch:16},{wch:50},{wch:14},{wch:20},{wch:20},{wch:26}];
+    ws['!cols'] = [{wch:16},{wch:50},{wch:12},{wch:10},{wch:14},{wch:20},{wch:20},{wch:26}];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Не знайдено в базі');
     const fname = `Не_знайдено_в_базі_${dateStr}.xlsx`;
@@ -1288,7 +1327,7 @@ function acceptAiSuggestion(idx){
   const r = state.results[idx];
   if(!r || !r._aiMatchItem) return;
   const base = r._aiMatchItem;
-  const rebuilt = buildResultRow(base.code, base.name, r.newPrice, base);
+  const rebuilt = buildResultRow(base.code, base.name, r.newPrice, base, false, r.listPrice, r.discountPct);
   rebuilt.status = 'ok';
   state.results[idx] = rebuilt;
   renderResults();
