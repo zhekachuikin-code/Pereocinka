@@ -1114,24 +1114,55 @@ document.getElementById('roundBtn').addEventListener('click', ()=>{
    ============================================================ */
 document.getElementById('exportBtn').addEventListener('click', ()=>{
   if(state.results.length===0){ toast('Немає даних для експорту', true); return; }
-  const rows = state.results.map(r=>({
-    'Код': r.code,
-    'Назва': r.name,
-    'Нова ціна': r.newPrice,
-    'Опт. ціна': r.newOpt!==null?Math.round(r.newOpt*100)/100:'',
-    'Розн. ціна': r.newRetail!==null?Math.round(r.newRetail*100)/100:'',
-    'Валюта': r.currency||'',
-    '% зміни': r.pct!==null? Math.round(r.pct*100)/100 : '',
-    'Статус': r.status==='ok'?'Знайдено':(r.status==='ai'?'ШІ-підбір (прийнято)':'Не знайдено в базі'),
-  }));
-  const ws = XLSX.utils.json_to_sheet(rows);
-  ws['!cols'] = [{wch:16},{wch:50},{wch:12},{wch:12},{wch:12},{wch:9},{wch:10},{wch:22}];
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Переоцінка');
+
+  const found = state.results.filter(r=>r.status==='ok');
+  const notFound = state.results.filter(r=>r.status!=='ok');
+
+  if(found.length===0 && notFound.length===0){ toast('Немає даних для експорту', true); return; }
+
   const ts = new Date();
-  const fname = `Переоцінка_${ts.getFullYear()}-${String(ts.getMonth()+1).padStart(2,'0')}-${String(ts.getDate()).padStart(2,'0')}.xlsx`;
-  XLSX.writeFile(wb, fname);
-  toast('Файл експортовано: '+fname);
+  const dateStr = `${ts.getFullYear()}-${String(ts.getMonth()+1).padStart(2,'0')}-${String(ts.getDate()).padStart(2,'0')}`;
+  let exportedNames = [];
+
+  if(found.length>0){
+    const rows = found.map(r=>({
+      'Код': r.code,
+      'Назва': r.name,
+      'Нова ціна': r.newPrice,
+      'Опт. ціна': r.newOpt!==null?Math.round(r.newOpt*100)/100:'',
+      'Розн. ціна': r.newRetail!==null?Math.round(r.newRetail*100)/100:'',
+      'Валюта': r.currency||'',
+      '% зміни': r.pct!==null? Math.round(r.pct*100)/100 : '',
+      'Статус': 'Знайдено',
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [{wch:16},{wch:50},{wch:12},{wch:12},{wch:12},{wch:9},{wch:10},{wch:22}];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Переоцінка');
+    const fname = `Переоцінка_${dateStr}.xlsx`;
+    XLSX.writeFile(wb, fname);
+    exportedNames.push(fname);
+  }
+
+  if(notFound.length>0){
+    const rows = notFound.map(r=>({
+      'Код': r.code,
+      'Назва': r.name,
+      'Ціна з прайсу': r.newPrice,
+      'Статус': r.noCode
+        ? 'Без коду'
+        : (r.status==='ai' ? 'ШІ-підбір (не підтверджено)' : 'Не знайдено в базі'),
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [{wch:16},{wch:50},{wch:14},{wch:26}];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Не знайдено в базі');
+    const fname = `Не_знайдено_в_базі_${dateStr}.xlsx`;
+    XLSX.writeFile(wb, fname);
+    exportedNames.push(fname);
+  }
+
+  toast('Файли експортовано: '+exportedNames.join(', '));
 });
 
 /* ============================================================
