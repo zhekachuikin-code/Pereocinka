@@ -446,8 +446,23 @@ progress.bar::-webkit-progress-value{background:var(--accent);border-radius:3px;
     <div class="card">
       <div class="card-head">
         <div class="card-title"><span class="dot"></span>Результати переоцінки</div>
-        <div class="btn-row">
-          <button class="btn small" id="roundBtn">Округлити ціни</button>
+        <div class="btn-row" style="align-items:center;">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-muted);">
+            Округлення опт:
+            <select id="roundOptSelect" style="padding:4px 8px;">
+              <option value="0">0 знаків</option>
+              <option value="1">1 знак</option>
+              <option value="2" selected>2 знаки</option>
+            </select>
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-muted);">
+            Округлення розн.:
+            <select id="roundRetailSelect" style="padding:4px 8px;">
+              <option value="0">0 знаків</option>
+              <option value="1">1 знак</option>
+              <option value="2" selected>2 знаки</option>
+            </select>
+          </label>
           <button class="btn small" id="aiAllBtn">✦ ШІ: розпізнати всі невідомі</button>
           <button class="btn small" id="exportBtn">Експорт в Excel</button>
           <button class="btn small danger-outline" id="clearResultBtn">Очистити</button>
@@ -526,6 +541,15 @@ function toast(msg, isErr){
 function fmtNum(n){
   if(n===null||n===undefined||isNaN(n)) return '—';
   return n.toLocaleString('uk-UA',{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+function fmtNumD(n, decimals){
+  if(n===null||n===undefined||isNaN(n)) return '—';
+  return n.toLocaleString('uk-UA',{minimumFractionDigits:decimals,maximumFractionDigits:decimals});
+}
+function roundTo(n, decimals){
+  if(n===null||n===undefined||isNaN(n)) return n;
+  const f = Math.pow(10, decimals);
+  return Math.round(n*f)/f;
 }
 function parseNum(v){
   if(typeof v==='number') return v;
@@ -753,6 +777,8 @@ function escapeHtml(s){
 state.priceRawRows = [];      // raw 2D array of strings/values as loaded
 state.priceMapping = { code:-1, name:-1, price:-1 };
 state.priceDiscountPct = 0;   // % знижки постачальника, застосовується до всього прайсу
+state.roundOptDecimals = 2;   // знаків після коми для опт. ціни
+state.roundRetailDecimals = 2;// знаків після коми для розн. ціни
 
 document.getElementById('priceDiscountCheck').addEventListener('change', e=>{
   document.getElementById('priceDiscountWrap').style.display = e.target.checked ? 'flex' : 'none';
@@ -1115,8 +1141,8 @@ function renderResults(){
       <td class="mono">${fmtNum(r.listPrice)}</td>
       <td class="mono">${r.discountPct>0?('-'+r.discountPct+'%'):'—'}</td>
       <td class="mono">${fmtNum(r.newPrice)}</td>
-      <td class="mono">${r.newOpt!==null?fmtNum(r.newOpt):'—'}${r.defaultMarkup?'<span title="Стандартна націнка +20% (немає даних в базі)" style="color:var(--up);">*</span>':''}</td>
-      <td class="mono">${r.newRetail!==null?fmtNum(r.newRetail):'—'}${r.defaultMarkup?'<span title="Стандартна націнка +30% (немає даних в базі)" style="color:var(--up);">*</span>':''}</td>
+      <td class="mono">${r.newOpt!==null?fmtNumD(roundTo(r.newOpt, state.roundOptDecimals), state.roundOptDecimals):'—'}${r.defaultMarkup?'<span title="Стандартна націнка +20% (немає даних в базі)" style="color:var(--up);">*</span>':''}</td>
+      <td class="mono">${r.newRetail!==null?fmtNumD(roundTo(r.newRetail, state.roundRetailDecimals), state.roundRetailDecimals):'—'}${r.defaultMarkup?'<span title="Стандартна націнка +30% (немає даних в базі)" style="color:var(--up);">*</span>':''}</td>
       <td>${deltaHtml}</td>
       <td>${statusHtml}</td>
       <td>${actionHtml}</td>
@@ -1144,14 +1170,13 @@ document.getElementById('clearResultBtn').addEventListener('click', ()=>{
   toast('Результати очищено');
 });
 
-document.getElementById('roundBtn').addEventListener('click', ()=>{
-  if(state.results.length===0){ toast('Немає результатів для округлення', true); return; }
-  state.results.forEach(r=>{
-    if(r.newOpt!==null) r.newOpt = Math.round(r.newOpt*100)/100;
-    if(r.newRetail!==null) r.newRetail = Math.round(r.newRetail*100)/100;
-  });
+document.getElementById('roundOptSelect').addEventListener('change', e=>{
+  state.roundOptDecimals = parseInt(e.target.value, 10);
   renderResults();
-  toast('Ціни округлено до копійок');
+});
+document.getElementById('roundRetailSelect').addEventListener('change', e=>{
+  state.roundRetailDecimals = parseInt(e.target.value, 10);
+  renderResults();
 });
 
 /* ============================================================
@@ -1176,8 +1201,8 @@ document.getElementById('exportBtn').addEventListener('click', ()=>{
       'Ціна прайсу': r.listPrice,
       'Знижка, %': r.discountPct||0,
       'Ціна закупівлі': Math.round(r.newPrice*100)/100,
-      'Опт. ціна': r.newOpt!==null?Math.round(r.newOpt*100)/100:'',
-      'Розн. ціна': r.newRetail!==null?Math.round(r.newRetail*100)/100:'',
+      'Опт. ціна': r.newOpt!==null?roundTo(r.newOpt, state.roundOptDecimals):'',
+      'Розн. ціна': r.newRetail!==null?roundTo(r.newRetail, state.roundRetailDecimals):'',
       'Валюта': r.currency||'',
       '% зміни': r.pct!==null? Math.round(r.pct*100)/100 : '',
       'Статус': 'Знайдено',
@@ -1198,8 +1223,8 @@ document.getElementById('exportBtn').addEventListener('click', ()=>{
       'Ціна прайсу': r.listPrice,
       'Знижка, %': r.discountPct||0,
       'Ціна закупівлі': Math.round(r.newPrice*100)/100,
-      'Опт. ціна (станд. +20%)': r.newOpt!==null?Math.round(r.newOpt*100)/100:'',
-      'Розн. ціна (станд. +30%)': r.newRetail!==null?Math.round(r.newRetail*100)/100:'',
+      'Опт. ціна (станд. +20%)': r.newOpt!==null?roundTo(r.newOpt, state.roundOptDecimals):'',
+      'Розн. ціна (станд. +30%)': r.newRetail!==null?roundTo(r.newRetail, state.roundRetailDecimals):'',
       'Статус': r.noCode
         ? 'Без коду'
         : (r.status==='ai' ? 'ШІ-підбір (не підтверджено)' : 'Не знайдено в базі'),
