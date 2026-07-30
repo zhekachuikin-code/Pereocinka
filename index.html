@@ -193,6 +193,7 @@ table{width:100%;border-collapse:collapse;font-size:12.5px;}
 #resultTable{table-layout:fixed;}
 #resultTable td,#resultTable th{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 #resultTable td:nth-child(2){white-space:normal;overflow-wrap:break-word;}
+#resultTable td[colspan]{white-space:normal;overflow:visible;text-overflow:clip;}
 thead th{
   position:sticky;top:0;background:var(--panel2);color:var(--text-dim);text-align:left;
   padding:9px 10px;font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:0.5px;
@@ -227,7 +228,12 @@ tbody tr.row-ai{background:var(--warn-soft);}
 .pct{font-family:'IBM Plex Mono',monospace;font-size:11.5px;min-width:36px;}
 
 .ai-sugg{display:flex;flex-direction:column;gap:5px;}
-.ai-sugg .cand{font-size:11.5px;color:var(--text-muted);}
+.ai-sugg .cand{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  font-size:11.5px;color:var(--text-muted);background:var(--panel2);
+  border:1px solid var(--border2);border-radius:7px;padding:6px 10px;
+}
+.ai-sugg .cand-info{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;}
 .ai-sugg .cand b{color:var(--brass);font-family:'IBM Plex Mono',monospace;}
 .ai-actions{display:flex;gap:6px;margin-top:2px;flex-wrap:wrap;}
 
@@ -1610,9 +1616,11 @@ function renderResults(){
       statusHtml = '<span class="status-chip ai">🔍 схожі варіанти</span>';
       const cands = r._candidates||[];
       actionHtml = `<div class="ai-sugg">
-          ${cands.map(c=>`<div class="cand">${Math.round(c.score*100)}% · <b>${escapeHtml(c.item.code)}</b> — ${escapeHtml(c.item.name)}
-            <div class="ai-actions"><button class="btn small primary" data-act="accept-cand" data-idx="${idx}" data-code="${escapeHtml(c.item.code)}">Прийняти</button></div></div>`).join('')}
-          <div class="ai-actions">
+          ${cands.map(c=>`<div class="cand">
+            <span class="cand-info">${Math.round(c.score*100)}% · <b>${escapeHtml(c.item.code)}</b> — ${escapeHtml(c.item.name)}</span>
+            <button class="btn small primary" data-act="accept-cand" data-idx="${idx}" data-code="${escapeHtml(c.item.code)}">Прийняти</button>
+          </div>`).join('')}
+          <div class="ai-actions" style="margin-top:4px;">
             <button class="btn small ghost" data-act="reject-suggest" data-idx="${idx}">Відхилити всі</button>
             <button class="btn small ghost" data-act="manual-search" data-idx="${idx}">🔎 Пошук вручну</button>
           </div>
@@ -1639,18 +1647,35 @@ function renderResults(){
       }
     }
 
-    tr.innerHTML = `
-      <td class="mono code-cell">${escapeHtml(r.code)}</td>
-      <td>${escapeHtml(r.name)||'<span style=\"color:var(--text-dim)\">—</span>'}</td>
-      <td class="mono">${fmtNum(r.listPrice)}</td>
-      <td class="mono">${[r.discountPct>0?('-'+r.discountPct+'%'):'', r.surchargePct>0?('+'+r.surchargePct+'%'):''].filter(Boolean).join(' / ') || '—'}</td>
-      <td class="mono">${fmtNum(r.newPrice)}</td>
-      <td class="mono">${r.newOpt!==null?fmtNumD(roundTo(r.newOpt, state.roundOptDecimals), state.roundOptDecimals):'—'}${r.defaultMarkup?'<span title="Стандартна націнка +20% (немає даних в базі)" style="color:var(--up);">*</span>':''}</td>
-      <td class="mono">${r.newRetail!==null?fmtNumD(roundTo(r.newRetail, state.roundRetailDecimals), state.roundRetailDecimals):'—'}${r.defaultMarkup?'<span title="Стандартна націнка +30% (немає даних в базі)" style="color:var(--up);">*</span>':''}</td>
-      <td>${deltaHtml}</td>
-      <td>${statusHtml}</td>
-      <td>${actionHtml}</td>
-    `;
+    if(r.status==='suggest'){
+      // для рядків із кандидатами відводимо всю ширину рядка під список — вужня остання
+      // колонка робила назви товарів нечитабельними, а колонка "Назва" простоювала пустою
+      tr.innerHTML = `
+        <td class="mono code-cell">${escapeHtml(r.code)}</td>
+        <td colspan="9">
+          <div style="display:flex;align-items:flex-start;gap:18px;flex-wrap:wrap;">
+            <div style="flex:0 0 220px;max-width:280px;">
+              <div style="color:var(--text-muted);">${escapeHtml(r.name)||'<span style=\"color:var(--text-dim)\">—</span>'}</div>
+              <div style="margin-top:5px;">${statusHtml}</div>
+            </div>
+            <div style="flex:1;min-width:340px;">${actionHtml}</div>
+          </div>
+        </td>
+      `;
+    }else{
+      tr.innerHTML = `
+        <td class="mono code-cell">${escapeHtml(r.code)}</td>
+        <td>${escapeHtml(r.name)||'<span style=\"color:var(--text-dim)\">—</span>'}</td>
+        <td class="mono">${fmtNum(r.listPrice)}</td>
+        <td class="mono">${[r.discountPct>0?('-'+r.discountPct+'%'):'', r.surchargePct>0?('+'+r.surchargePct+'%'):''].filter(Boolean).join(' / ') || '—'}</td>
+        <td class="mono">${fmtNum(r.newPrice)}</td>
+        <td class="mono">${r.newOpt!==null?fmtNumD(roundTo(r.newOpt, state.roundOptDecimals), state.roundOptDecimals):'—'}${r.defaultMarkup?'<span title="Стандартна націнка +20% (немає даних в базі)" style="color:var(--up);">*</span>':''}</td>
+        <td class="mono">${r.newRetail!==null?fmtNumD(roundTo(r.newRetail, state.roundRetailDecimals), state.roundRetailDecimals):'—'}${r.defaultMarkup?'<span title="Стандартна націнка +30% (немає даних в базі)" style="color:var(--up);">*</span>':''}</td>
+        <td>${deltaHtml}</td>
+        <td>${statusHtml}</td>
+        <td>${actionHtml}</td>
+      `;
+    }
     frag.appendChild(tr);
   });
   tbody.appendChild(frag);
