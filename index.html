@@ -875,6 +875,12 @@ function roundTo(n, decimals){
   // округлення вгору (ceil), з компенсацією похибки плаваючої коми
   return Math.ceil((n*f) - 1e-9) / f;
 }
+function sanitizeFileNamePart(s){
+  // прибирає символи, недопустимі у назвах файлів, і замінює пробіли на "_"
+  return String(s||'').trim()
+    .replace(/[\\\/:*?"<>|]/g,'')
+    .replace(/\s+/g,'_');
+}
 function parseNum(v){
   if(typeof v==='number') return v;
   if(v===null||v===undefined) return NaN;
@@ -1729,6 +1735,7 @@ document.getElementById('exportBtn').addEventListener('click', ()=>{
 
   const ts = new Date();
   const dateStr = `${ts.getFullYear()}-${String(ts.getMonth()+1).padStart(2,'0')}-${String(ts.getDate()).padStart(2,'0')}`;
+  const supplierPart = state.currentSupplier ? sanitizeFileNamePart(state.currentSupplier)+'_' : '';
   let exportedNames = [];
 
   if(found.length>0){
@@ -1749,7 +1756,7 @@ document.getElementById('exportBtn').addEventListener('click', ()=>{
     ws['!cols'] = [{wch:16},{wch:50},{wch:12},{wch:10},{wch:16},{wch:14},{wch:12},{wch:12},{wch:9},{wch:10},{wch:22}];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Переоцінка');
-    const fname = `Переоцінка_${dateStr}.xlsx`;
+    const fname = `Переоцінка_${supplierPart}${dateStr}.xlsx`;
     XLSX.writeFile(wb, fname);
     exportedNames.push(fname);
   }
@@ -1772,7 +1779,7 @@ document.getElementById('exportBtn').addEventListener('click', ()=>{
     ws['!cols'] = [{wch:16},{wch:50},{wch:12},{wch:10},{wch:16},{wch:14},{wch:20},{wch:20},{wch:26}];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Не знайдено в базі');
-    const fname = `Не_знайдено_в_базі_${dateStr}.xlsx`;
+    const fname = `Не_знайдено_в_базі_${supplierPart}${dateStr}.xlsx`;
     XLSX.writeFile(wb, fname);
     exportedNames.push(fname);
   }
