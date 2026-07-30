@@ -779,12 +779,24 @@ function parseNum(v){
   return isNaN(n) ? NaN : n;
 }
 function normalize(s){
-  return String(s||'').toLowerCase()
-    .replace(/(\d)\s*[xх×]\s*(\d)/g,'$1x$2') // unify multiplication sign ONLY between digits: 32 х 1 / 32×1 -> 32x1 (не чіпає слова з "х", напр. "двохсторонній")
-    .replace(/[–—-]/g,'')                    // прибираємо ВСІ варіанти тире повністю: F-200x2 == F200x2
-    .replace(/["'«»()\\]/g,' ')              // strip quotes/brackets
-    .replace(/[\/.,]/g,' ')                  // remaining separators to space
-    .replace(/\s+/g,' ').trim();
+  let str = String(s||'').toLowerCase();
+  // десяткова кома МІЖ цифрами -> крапка, щоб "15,0" поводилось як ціле число "15.0"
+  // (без цього кроку кома розбивала число на шматки на наступних етапах)
+  str = str.replace(/(\d),(?=\d)/g, '$1.');
+  // об'єднуємо знак множення МІЖ ПОВНИМИ числами (цілими або десятковими) в один
+  // атомарний розмірний токен: "15.0 x 1.0" -> "15.0x1.0" (а не розбите на шматки
+  // по одній цифрі, як було раніше — це і спричиняло хибні 100% збіги для різних діаметрів)
+  const multRe = /(\d+(?:\.\d+)?)\s*[xх×]\s*(\d+(?:\.\d+)?)/g;
+  str = str.replace(multRe, '$1x$2');
+  str = str.replace(multRe, '$1x$2'); // повторний прохід для потрійних розмірів (напр. 15.0x1.0x2.5)
+  str = str.replace(/[–—-]/g,'');                    // прибираємо ВСІ варіанти тире повністю: F-200x2 == F200x2
+  str = str.replace(/["'«»()\\]/g,' ');              // strip quotes/brackets
+  // крапку прибираємо (замінюємо на пробіл) скрізь, КРІМ випадку коли вона є десятковою
+  // крапкою строго між двома цифрами (щоб не зламати щойно зібрані розмірні токени)
+  str = str.replace(/(?<!\d)\.|\.(?!\d)/g, ' ');
+  str = str.replace(/[\/,]/g,' ');                   // залишкові розділювачі (слеш, коми поза числами) -> пробіл
+  str = str.replace(/\s+/g,' ').trim();
+  return str;
 }
 function logTo(elId, msg, cls){
   const el = document.getElementById(elId);
