@@ -50,7 +50,7 @@ body::before{
   pointer-events:none;
   z-index:0;
 }
-.app{position:relative;z-index:1;max-width:1400px;margin:0 auto;padding:0 24px 60px;}
+.app{position:relative;z-index:1;max-width:1760px;margin:0 auto;padding:0 24px 60px;}
 
 /* ── TOPBAR ── */
 .topbar{
@@ -190,12 +190,15 @@ label.field-label{
 /* ── TABLE ── */
 .table-wrap{border:1px solid var(--border);border-radius:10px;overflow:auto;max-height:520px;background:var(--bg);}
 table{width:100%;border-collapse:collapse;font-size:12.5px;}
+#resultTable{table-layout:fixed;}
+#resultTable td,#resultTable th{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+#resultTable td:nth-child(2){white-space:normal;overflow-wrap:break-word;}
 thead th{
   position:sticky;top:0;background:var(--panel2);color:var(--text-dim);text-align:left;
-  padding:10px 12px;font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:0.5px;
+  padding:9px 10px;font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:0.5px;
   border-bottom:1px solid var(--border2);white-space:nowrap;z-index:2;
 }
-tbody td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:middle;}
+tbody td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:middle;}
 tbody tr:hover{background:var(--panel2);}
 tbody tr.row-danger{background:var(--danger-soft);}
 tbody tr.row-danger:hover{background:rgba(239,91,91,0.18);}
@@ -211,22 +214,22 @@ tbody tr.row-ai{background:var(--warn-soft);}
 .status-chip.ai{background:var(--warn-soft);color:var(--up);}
 
 /* delta gauge */
-.delta{display:flex;align-items:center;gap:7px;}
+.delta{display:flex;align-items:center;gap:6px;}
 .delta .arrow{font-size:12px;width:14px;text-align:center;}
 .delta.up .arrow,.delta.up .pct{color:var(--up);}
 .delta.down .arrow,.delta.down .pct{color:var(--down);}
 .delta.flat .arrow,.delta.flat .pct{color:var(--text-dim);}
-.delta .bar{width:46px;height:5px;border-radius:3px;background:var(--border2);overflow:hidden;position:relative;}
+.delta .bar{width:28px;height:5px;border-radius:3px;background:var(--border2);overflow:hidden;position:relative;flex-shrink:0;}
 .delta .bar i{position:absolute;top:0;bottom:0;border-radius:3px;}
 .delta.up .bar i{background:var(--up);left:50%;}
 .delta.down .bar i{background:var(--down);right:50%;}
 .delta .bar::before{content:"";position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:var(--border2);}
-.pct{font-family:'IBM Plex Mono',monospace;font-size:11.5px;min-width:44px;}
+.pct{font-family:'IBM Plex Mono',monospace;font-size:11.5px;min-width:36px;}
 
 .ai-sugg{display:flex;flex-direction:column;gap:5px;}
 .ai-sugg .cand{font-size:11.5px;color:var(--text-muted);}
 .ai-sugg .cand b{color:var(--brass);font-family:'IBM Plex Mono',monospace;}
-.ai-actions{display:flex;gap:6px;margin-top:2px;}
+.ai-actions{display:flex;gap:6px;margin-top:2px;flex-wrap:wrap;}
 
 /* ── LOG / TOAST ── */
 .log{
@@ -566,7 +569,19 @@ body.locked .app{display:none;}
       </div>
       <p class="hint" style="margin-bottom:10px;"><span style="color:var(--up);">*</span> — застосована стандартна націнка (+20% опт / +30% роздріб): товар не знайдено в базі, або в базі немає ціни/націнки для нього.</p>
       <div class="table-wrap">
-        <table>
+        <table id="resultTable">
+          <colgroup>
+            <col style="width:100px;">   <!-- Код -->
+            <col>                        <!-- Назва — гнучка, забирає весь вільний простір -->
+            <col style="width:86px;">    <!-- Ціна прайсу -->
+            <col style="width:92px;">    <!-- Знижка/Накидка -->
+            <col style="width:86px;">    <!-- Ціна закупівлі -->
+            <col style="width:86px;">    <!-- Нова опт -->
+            <col style="width:86px;">    <!-- Нова розн. -->
+            <col style="width:116px;">   <!-- Δ до бази -->
+            <col style="width:140px;">   <!-- Статус -->
+            <col style="width:160px;">   <!-- дії -->
+          </colgroup>
           <thead><tr>
             <th>Код</th><th>Назва</th><th>Ціна прайсу</th><th>Знижка/Накидка</th><th>Ціна закупівлі</th><th>Нова опт</th><th>Нова розн.</th><th>Δ до бази</th><th>Статус</th><th></th>
           </tr></thead>
