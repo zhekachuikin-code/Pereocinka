@@ -769,7 +769,8 @@ function fmtNumD(n, decimals){
 function roundTo(n, decimals){
   if(n===null||n===undefined||isNaN(n)) return n;
   const f = Math.pow(10, decimals);
-  return Math.round(n*f)/f;
+  // округлення вгору (ceil), з компенсацією похибки плаваючої коми
+  return Math.ceil((n*f) - 1e-9) / f;
 }
 function parseNum(v){
   if(typeof v==='number') return v;
