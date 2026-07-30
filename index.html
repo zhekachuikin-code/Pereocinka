@@ -430,6 +430,18 @@ body.locked .app{display:none;}
         </div>
       </div>
 
+      <div style="margin-bottom:16px;background:var(--panel2);border:1px solid var(--border2);border-radius:8px;padding:12px 14px;">
+        <label class="field-label" style="margin-bottom:6px;">Постачальник (щоб запам'ятати колонки та ручні зіставлення)</label>
+        <div class="btn-row">
+          <select id="supplierSelect" style="flex:1;min-width:200px;background:var(--bg);border:1px solid var(--border2);border-radius:7px;color:var(--text);padding:8px 10px;font-family:'IBM Plex Sans',sans-serif;font-size:12.5px;">
+            <option value="">— без постачальника —</option>
+          </select>
+          <button class="btn small" id="newSupplierBtn">+ Новий постачальник</button>
+          <button class="btn small danger-outline" id="deleteSupplierBtn" style="display:none;">Видалити профіль</button>
+        </div>
+        <div id="supplierHint" style="font-size:11.5px;color:var(--text-dim);margin-top:7px;"></div>
+      </div>
+
       <div class="src-toggle">
         <button class="active" data-src="paste">Вставити з Excel</button>
         <button data-src="file">Імпортувати файл</button>
@@ -678,6 +690,8 @@ const state = {
   matchThresholdHigh: 0.85, // score ≥ це — автоматичне зіставлення за назвою
   matchThresholdLow: 0.35,  // score < це — вважається "не знайдено"
   candidateCount: 3,        // скільки кандидатів показувати користувачу
+  currentSupplier: null,        // ім'я обраного постачальника (або null)
+  currentSupplierProfile: null, // { mapping, headerLabels, hasHeader, discountPct, surchargePct, manualMatches }
 };
 
 /* ============================================================
@@ -686,12 +700,16 @@ const state = {
 const BASE_DB_NAME = 'pereotsinka_db';
 const BASE_STORE = 'base';
 const BASE_KEY = 'last';
+const SUPPLIER_STORE = 'suppliers';
+const BASE_DB_VERSION = 2;
 
 function openBaseDB(){
   return new Promise((resolve, reject)=>{
-    const req = indexedDB.open(BASE_DB_NAME, 1);
+    const req = indexedDB.open(BASE_DB_NAME, BASE_DB_VERSION);
     req.onupgradeneeded = ()=>{
-      req.result.createObjectStore(BASE_STORE);
+      const db = req.result;
+      if(!db.objectStoreNames.contains(BASE_STORE)) db.createObjectStore(BASE_STORE);
+      if(!db.objectStoreNames.contains(SUPPLIER_STORE)) db.createObjectStore(SUPPLIER_STORE); // keyed by supplier name
     };
     req.onsuccess = ()=>resolve(req.result);
     req.onerror = ()=>reject(req.error);
@@ -733,6 +751,65 @@ async function clearBaseInDB(){
     });
     db.close();
   }catch(e){ console.warn('Не вдалося очистити базу в IndexedDB:', e); }
+}
+
+/* ============================================================
+   ПРОФІЛІ ПОСТАЧАЛЬНИКІВ (структура колонок + ручні зіставлення)
+   ============================================================ */
+async function saveSupplierProfile(profile){
+  try{
+    const db = await openBaseDB();
+    profile.updatedAt = new Date().toISOString();
+    await new Promise((resolve, reject)=>{
+      const tx = db.transaction(SUPPLIER_STORE, 'readwrite');
+      tx.objectStore(SUPPLIER_STORE).put(profile, profile.name);
+      tx.oncomplete = resolve;
+      tx.onerror = ()=>reject(tx.error);
+    });
+    db.close();
+  }catch(e){ console.warn('Не вдалося зберегти профіль постачальника:', e); }
+}
+async function loadSupplierProfile(name){
+  try{
+    const db = await openBaseDB();
+    const data = await new Promise((resolve, reject)=>{
+      const tx = db.transaction(SUPPLIER_STORE, 'readonly');
+      const req = tx.objectStore(SUPPLIER_STORE).get(name);
+      req.onsuccess = ()=>resolve(req.result || null);
+      req.onerror = ()=>reject(req.error);
+    });
+    db.close();
+    return data;
+  }catch(e){ console.warn('Не вдалося прочитати профіль постачальника:', e); return null; }
+}
+async function loadAllSupplierProfiles(){
+  try{
+    const db = await openBaseDB();
+    const data = await new Promise((resolve, reject)=>{
+      const tx = db.transaction(SUPPLIER_STORE, 'readonly');
+      const req = tx.objectStore(SUPPLIER_STORE).getAll();
+      req.onsuccess = ()=>resolve(req.result || []);
+      req.onerror = ()=>reject(req.error);
+    });
+    db.close();
+    return data;
+  }catch(e){ console.warn('Не вдалося прочитати профілі постачальників:', e); return []; }
+}
+async function deleteSupplierProfile(name){
+  try{
+    const db = await openBaseDB();
+    await new Promise((resolve, reject)=>{
+      const tx = db.transaction(SUPPLIER_STORE, 'readwrite');
+      tx.objectStore(SUPPLIER_STORE).delete(name);
+      tx.oncomplete = resolve;
+      tx.onerror = ()=>reject(tx.error);
+    });
+    db.close();
+  }catch(e){ console.warn('Не вдалося видалити профіль постачальника:', e); }
+}
+function emptySupplierProfile(name){
+  return { name, mapping:{code:-1,name:-1,name2:-1,price:-1}, headerLabels:{}, hasHeader:null,
+    discountPct:0, surchargePct:0, manualMatches:{}, updatedAt:null };
 }
 async function restoreLastBase(){
   const data = await loadBaseFromDB();
@@ -1127,7 +1204,7 @@ function guessColumnType(rows, headerRow, colIdx, hasHeader){
   return '';
 }
 
-function openMapping(rows, hasHeaderGuess){
+async function openMapping(rows, hasHeaderGuess){
   state.priceRawRows = rows;
   document.getElementById('hasHeaderCheck').checked = !!hasHeaderGuess;
   document.getElementById('mappingCard').style.display='block';
@@ -1138,8 +1215,54 @@ function openMapping(rows, hasHeaderGuess){
   document.getElementById('priceSurchargeCheck').checked = false;
   document.getElementById('priceSurchargeWrap').style.display = 'none';
   document.getElementById('priceSurchargeInput').value = '';
+
+  // скидаємо мапінг перед (пере)застосуванням профілю постачальника чи авто-вгадування
+  state.priceMapping = { code:-1, name:-1, name2:-1, price:-1 };
+
+  const profile = state.currentSupplierProfile;
+  if(profile && profile.mapping && (profile.mapping.code>=0 || profile.mapping.name>=0 || profile.mapping.price>=0)){
+    if(profile.hasHeader!==null && profile.hasHeader!==undefined){
+      document.getElementById('hasHeaderCheck').checked = !!profile.hasHeader;
+    }
+    applySavedMappingToRows(profile, rows, document.getElementById('hasHeaderCheck').checked);
+    if(profile.discountPct>0){
+      document.getElementById('priceDiscountCheck').checked = true;
+      document.getElementById('priceDiscountWrap').style.display='flex';
+      document.getElementById('priceDiscountInput').value = profile.discountPct;
+    }
+    if(profile.surchargePct>0){
+      document.getElementById('priceSurchargeCheck').checked = true;
+      document.getElementById('priceSurchargeWrap').style.display='flex';
+      document.getElementById('priceSurchargeInput').value = profile.surchargePct;
+    }
+    logTo('priceLog', `Застосовано збережену структуру колонок постачальника «${state.currentSupplier}».`, 'ok');
+  }
+
   renderMappingUI();
   document.getElementById('mappingCard').scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+function applySavedMappingToRows(profile, rows, hasHeader){
+  const headerRow = hasHeader ? rows[0] : null;
+  const colCount = Math.max(...rows.map(r=>r.length));
+  const roles = ['code','name','name2','price'];
+  const mapping = { code:-1, name:-1, name2:-1, price:-1 };
+  const used = new Set();
+  roles.forEach(role=>{
+    const savedIdx = profile.mapping ? profile.mapping[role] : -1;
+    if(savedIdx===undefined || savedIdx===-1) return;
+    const savedLabel = profile.headerLabels ? profile.headerLabels[role] : '';
+    let targetCol = -1;
+    // 1) найнадійніше — збіг за назвою заголовка (стійкий до зміни порядку колонок)
+    if(headerRow && savedLabel){
+      for(let c=0;c<colCount;c++){
+        if(!used.has(c) && normalize(headerRow[c])===savedLabel){ targetCol=c; break; }
+      }
+    }
+    // 2) інакше — та сама позиція колонки, що й минулого разу
+    if(targetCol===-1 && savedIdx<colCount && !used.has(savedIdx)) targetCol = savedIdx;
+    if(targetCol!==-1){ mapping[role]=targetCol; used.add(targetCol); }
+  });
+  state.priceMapping = mapping;
 }
 
 document.getElementById('hasHeaderCheck').addEventListener('change', renderMappingUI);
@@ -1299,6 +1422,26 @@ document.getElementById('applyMappingBtn').addEventListener('click', ()=>{
   document.getElementById('priceReadySummary').textContent =
     `${list.length} товарів готово до порівняння` + (noCodeCount>0 ? ` · без коду: ${noCodeCount} (підуть на зіставлення за назвою)` : '') + (state.priceDiscountPct>0 ? ` · знижка ${state.priceDiscountPct}% застосована` : '') + (state.priceSurchargePct>0 ? ` · +${state.priceSurchargePct}% накидка застосована` : '');
   toast(`Прайс готовий: ${list.length} товарів`);
+
+  // запам'ятовуємо структуру колонок за обраним постачальником
+  if(state.currentSupplier){
+    const headerRow = hasHeader ? rows[0] : null;
+    const headerLabels = {};
+    ['code','name','name2','price'].forEach(role=>{
+      const col = m[role];
+      if(col>=0 && headerRow) headerLabels[role] = normalize(headerRow[col]);
+    });
+    const profile = state.currentSupplierProfile || emptySupplierProfile(state.currentSupplier);
+    profile.mapping = { code:m.code, name:m.name, name2:m.name2, price:m.price };
+    profile.headerLabels = headerLabels;
+    profile.hasHeader = hasHeader;
+    profile.discountPct = state.priceDiscountPct;
+    profile.surchargePct = state.priceSurchargePct;
+    profile.manualMatches = profile.manualMatches || {};
+    state.currentSupplierProfile = profile;
+    saveSupplierProfile(profile);
+    updateSupplierHint();
+  }
 });
 
 document.getElementById('clearPriceBtn').addEventListener('click', ()=>{
@@ -1331,21 +1474,31 @@ document.getElementById('compareBtn').addEventListener('click', ()=>{
   if(!rows || rows.length===0){ toast('Немає даних прайсу для порівняння', true); return; }
 
   const codeIndex = buildCodeIndex();
+  const supplierMatches = (state.currentSupplierProfile && state.currentSupplierProfile.manualMatches) || null;
   const results = [];
   for(const pr of rows){
     let base = pr.code ? state.baseMap.get(pr.code) : null;
     let matchedCode = pr.code;
-    let foundInName = false;
+    let matchSource = base ? null : null;
+    if(!base && supplierMatches){
+      // раніше вручну підтверджене зіставлення для цього постачальника — найнадійніше джерело
+      const savedCode = supplierMatches[normalize(pr.name)];
+      if(savedCode){
+        const item = state.baseMap.get(savedCode);
+        if(item){ base = item; matchedCode = savedCode; matchSource = 'supplier'; }
+      }
+    }
     if(!base){
       // код не задано окремою колонкою (або не збігся) — шукаємо код, зашитий у самій назві
       const found = extractCodeFromName(pr.name, codeIndex);
-      if(found){ base = found; matchedCode = found.code; foundInName = true; }
+      if(found){ base = found; matchedCode = found.code; matchSource = 'codeInName'; }
     }
     if(!base){
       results.push(buildResultRow(pr.code, pr.name, pr.price, null, !pr.code, pr.listPrice, pr.discountPct, pr.surchargePct, pr.name));
     }else{
       const row = buildResultRow(matchedCode, base.name || pr.name, pr.price, base, false, pr.listPrice, pr.discountPct, pr.surchargePct, pr.name);
-      if(foundInName) row.matchedByCodeInName = true;
+      if(matchSource==='codeInName') row.matchedByCodeInName = true;
+      if(matchSource==='supplier') row.matchedBySupplierMemory = true;
       results.push(row);
     }
   }
@@ -1431,7 +1584,9 @@ function renderResults(){
           ? `<span class="status-chip ok">✓ знайдено</span><div class="cand" style="margin-top:3px;">за назвою · ${Math.round((r.matchScore||0)*100)}%</div>`
           : (r.matchedByCodeInName
             ? '<span class="status-chip ok">✓ знайдено</span><div class="cand" style="margin-top:3px;">код у назві</div>'
-            : '<span class="status-chip ok">✓ знайдено</span>'));
+            : (r.matchedBySupplierMemory
+              ? '<span class="status-chip ok">✓ знайдено</span><div class="cand" style="margin-top:3px;">запам\'ятано раніше</div>'
+              : '<span class="status-chip ok">✓ знайдено</span>')));
       actionHtml = `<div class="ai-actions">
           <button class="btn small ghost" data-act="reopen-match" data-idx="${idx}">Змінити</button>
           <button class="btn small ghost" data-act="manual-search" data-idx="${idx}">🔎 Пошук вручну</button>
@@ -1734,11 +1889,13 @@ function acceptCandidate(idx, code){
   if(!r || !r._candidates) return;
   const cand = r._candidates.find(c=>c.item.code===code);
   if(!cand) return;
-  const rebuilt = buildResultRow(cand.item.code, cand.item.name, r.newPrice, cand.item, false, r.listPrice, r.discountPct, r.surchargePct, r.origName!==undefined?r.origName:r.name);
+  const origName = r.origName!==undefined ? r.origName : r.name;
+  const rebuilt = buildResultRow(cand.item.code, cand.item.name, r.newPrice, cand.item, false, r.listPrice, r.discountPct, r.surchargePct, origName);
   rebuilt.status = 'ok';
   rebuilt.matchedByName = true;
   rebuilt.matchScore = cand.score;
   state.results[idx] = rebuilt;
+  rememberSupplierMatch(origName, cand.item.code);
   renderResults();
   toast('Код застосовано: '+cand.item.code);
 }
@@ -1819,13 +1976,15 @@ function selectManualItem(code){
   if(!r) return;
   const item = state.baseMap.get(code);
   if(!item){ toast('Товар не знайдено в базі', true); return; }
-  const rebuilt = buildResultRow(item.code, item.name, r.newPrice, item, false, r.listPrice, r.discountPct, r.surchargePct, r.origName!==undefined?r.origName:r.name);
+  const origName = r.origName!==undefined ? r.origName : r.name;
+  const rebuilt = buildResultRow(item.code, item.name, r.newPrice, item, false, r.listPrice, r.discountPct, r.surchargePct, origName);
   rebuilt._searched = true;
   rebuilt._candidates = r._candidates;
   rebuilt.status = 'ok';
   rebuilt.matchedByName = false;
   rebuilt.matchedManually = true;
   state.results[idx] = rebuilt;
+  rememberSupplierMatch(origName, item.code);
   closeManualSearch();
   renderResults();
   toast('Код застосовано вручну: '+item.code);
@@ -1872,10 +2031,91 @@ document.getElementById('aiAllBtn').addEventListener('click', async ()=>{
   toast(`Оброблено ${done}: автоматично зіставлено ${auto}, схожих варіантів ${suggest}`);
 });
 
+/* ============================================================
+   SUPPLIER UI — обрати/створити/видалити профіль постачальника
+   ============================================================ */
+function rememberSupplierMatch(name, code){
+  if(!state.currentSupplier) return;
+  const key = normalize(name);
+  if(!key) return;
+  const profile = state.currentSupplierProfile || emptySupplierProfile(state.currentSupplier);
+  profile.manualMatches = profile.manualMatches || {};
+  profile.manualMatches[key] = code;
+  state.currentSupplierProfile = profile;
+  saveSupplierProfile(profile);
+  updateSupplierHint();
+}
+function updateSupplierHint(){
+  const hint = document.getElementById('supplierHint');
+  const delBtn = document.getElementById('deleteSupplierBtn');
+  if(!state.currentSupplier){
+    hint.textContent = '';
+    delBtn.style.display = 'none';
+    return;
+  }
+  delBtn.style.display = 'inline-flex';
+  const p = state.currentSupplierProfile;
+  const matchCount = p && p.manualMatches ? Object.keys(p.manualMatches).length : 0;
+  const hasMapping = p && p.mapping && (p.mapping.code>=0||p.mapping.name>=0||p.mapping.price>=0);
+  const parts = [];
+  parts.push(hasMapping ? 'структуру колонок збережено' : 'структуру колонок ще не збережено');
+  parts.push(`запам'ятованих зіставлень: ${matchCount}`);
+  hint.textContent = parts.join(' · ');
+}
+async function populateSupplierSelect(selectName){
+  const sel = document.getElementById('supplierSelect');
+  const profiles = await loadAllSupplierProfiles();
+  profiles.sort((a,b)=>a.name.localeCompare(b.name, 'uk'));
+  sel.innerHTML = '<option value="">— без постачальника —</option>' +
+    profiles.map(p=>`<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)}</option>`).join('');
+  sel.value = selectName || '';
+}
+document.getElementById('supplierSelect').addEventListener('change', async (e)=>{
+  const name = e.target.value;
+  if(!name){
+    state.currentSupplier = null;
+    state.currentSupplierProfile = null;
+    updateSupplierHint();
+    return;
+  }
+  const profile = await loadSupplierProfile(name) || emptySupplierProfile(name);
+  state.currentSupplier = name;
+  state.currentSupplierProfile = profile;
+  updateSupplierHint();
+  // якщо прайс вже завантажено і відкрита форма колонок — застосовуємо збережений мапінг одразу
+  if(state.priceRawRows && state.priceRawRows.length>0 && document.getElementById('mappingCard').style.display!=='none'){
+    openMapping(state.priceRawRows, document.getElementById('hasHeaderCheck').checked);
+  }
+});
+document.getElementById('newSupplierBtn').addEventListener('click', async ()=>{
+  const name = (prompt('Назва постачальника:')||'').trim();
+  if(!name) return;
+  const existing = await loadSupplierProfile(name);
+  if(existing){
+    toast('Постачальник з такою назвою вже існує — обрано його профіль');
+  }else{
+    await saveSupplierProfile(emptySupplierProfile(name));
+    toast('Постачальника створено: '+name);
+  }
+  await populateSupplierSelect(name);
+  document.getElementById('supplierSelect').dispatchEvent(new Event('change'));
+});
+document.getElementById('deleteSupplierBtn').addEventListener('click', async ()=>{
+  if(!state.currentSupplier) return;
+  if(!confirm(`Видалити профіль постачальника «${state.currentSupplier}» (структуру колонок і запам'ятовані зіставлення)?`)) return;
+  await deleteSupplierProfile(state.currentSupplier);
+  toast('Профіль видалено');
+  state.currentSupplier = null;
+  state.currentSupplierProfile = null;
+  await populateSupplierSelect('');
+  updateSupplierHint();
+});
+
 /* init */
 refreshBaseUI();
 renderResults();
 restoreLastBase();
+populateSupplierSelect();
 </script>
 </body>
 </html>
