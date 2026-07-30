@@ -864,6 +864,11 @@ function fmtNumD(n, decimals){
   if(n===null||n===undefined||isNaN(n)) return '—';
   return n.toLocaleString('uk-UA',{minimumFractionDigits:decimals,maximumFractionDigits:decimals});
 }
+function fmtPrice(n){
+  // для «Ціна прайсу»: як мінімум 2 знаки, але до 3-х, якщо потрібні (щоб 0,042 не перетворювалось на 0,04)
+  if(n===null||n===undefined||isNaN(n)) return '—';
+  return n.toLocaleString('uk-UA',{minimumFractionDigits:2,maximumFractionDigits:3});
+}
 function roundTo(n, decimals){
   if(n===null||n===undefined||isNaN(n)) return n;
   const f = Math.pow(10, decimals);
@@ -1666,7 +1671,7 @@ function renderResults(){
       tr.innerHTML = `
         <td class="mono code-cell">${escapeHtml(r.code)}</td>
         <td>${escapeHtml(r.name)||'<span style=\"color:var(--text-dim)\">—</span>'}</td>
-        <td class="mono">${fmtNum(r.listPrice)}</td>
+        <td class="mono">${fmtPrice(r.listPrice)}</td>
         <td class="mono">${[r.discountPct>0?('-'+r.discountPct+'%'):'', r.surchargePct>0?('+'+r.surchargePct+'%'):''].filter(Boolean).join(' / ') || '—'}</td>
         <td class="mono">${fmtNum(roundTo(r.newPrice, 2))}</td>
         <td class="mono">${r.newOpt!==null?fmtNumD(roundTo(r.newOpt, state.roundOptDecimals), state.roundOptDecimals):'—'}${r.defaultMarkup?'<span title="Стандартна націнка +20% (немає даних в базі)" style="color:var(--up);">*</span>':''}</td>
