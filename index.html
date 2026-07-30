@@ -729,12 +729,10 @@ function parseNum(v){
 }
 function normalize(s){
   return String(s||'').toLowerCase()
-    .replace(/[хХ×]/g,'x')                 // unify multiplication sign / cyrillic х with latin x
-    .replace(/[–—]/g,'-')                  // unify dash variants
-    .replace(/["'«»()\\]/g,' ')            // strip quotes/brackets
-    .replace(/\s*-\s*/g,'-')               // "F - 100" -> "F-100"
-    .replace(/\s*x\s*/g,'x')               // "32 x 1" -> "32x1"
-    .replace(/[\/.,]/g,' ')                // remaining separators to space
+    .replace(/(\d)\s*[xх×]\s*(\d)/g,'$1x$2') // unify multiplication sign ONLY between digits: 32 х 1 / 32×1 -> 32x1 (не чіпає слова з "х", напр. "двохсторонній")
+    .replace(/[–—-]/g,'')                    // прибираємо ВСІ варіанти тире повністю: F-200x2 == F200x2
+    .replace(/["'«»()\\]/g,' ')              // strip quotes/brackets
+    .replace(/[\/.,]/g,' ')                  // remaining separators to space
     .replace(/\s+/g,' ').trim();
 }
 function logTo(elId, msg, cls){
@@ -1470,8 +1468,9 @@ function fuzzyEqual(a, b){
 function extractSizeTokens(normalizedName){
   return normalizedName.split(' ').filter(t=>t.length>0 && /\d/.test(t));
 }
+const STOPWORDS = new Set(['на','до','з','із','в','у','і','й','та','або','для','по','від','як','це','то','же','о','а','но','при','під','над','без','через','між','за','с','к','по-','что','что-то']);
 function extractWordTokens(normalizedName){
-  return normalizedName.split(' ').filter(t=>t.length>1 && !/\d/.test(t));
+  return normalizedName.split(' ').filter(t=>t.length>1 && !/\d/.test(t) && !STOPWORDS.has(t));
 }
 function diceScore(wordsA, wordsB){
   if(wordsA.length===0 || wordsB.length===0) return 0;
