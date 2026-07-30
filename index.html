@@ -266,6 +266,30 @@ tbody tr.row-ai{background:var(--warn-soft);}
 .modal .field{margin-bottom:14px;}
 .modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:18px;}
 
+/* ── MANUAL SEARCH MODAL ── */
+.modal.wide{max-width:640px;}
+.manual-search-target{
+  font-size:12px;color:var(--text-muted);background:var(--panel2);border:1px solid var(--border2);
+  border-radius:7px;padding:9px 12px;margin-bottom:14px;
+}
+.manual-search-target b{color:var(--text);}
+.manual-search-results{
+  border:1px solid var(--border);border-radius:8px;max-height:340px;overflow:auto;background:var(--bg);
+  margin-top:12px;
+}
+.manual-search-row{
+  display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border);
+  cursor:pointer;transition:background .12s;
+}
+.manual-search-row:last-child{border-bottom:none;}
+.manual-search-row:hover{background:var(--accent-soft);}
+.manual-search-row .msr-code{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--accent);flex-shrink:0;width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.manual-search-row .msr-name{flex:1;font-size:12.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.manual-search-row .msr-price{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--text-dim);flex-shrink:0;}
+.manual-search-empty{padding:24px 12px;text-align:center;font-size:12.5px;color:var(--text-dim);}
+.manual-search-hint{font-size:11px;color:var(--text-dim);margin-top:8px;}
+.status-chip.manual{background:rgba(53,208,192,0.14);color:var(--accent);}
+
 .hint{font-size:11.5px;color:var(--text-dim);margin-top:8px;line-height:1.6;}
 .hint b{color:var(--text-muted);}
 .search-row{display:flex;gap:10px;margin-bottom:12px;}
@@ -568,6 +592,23 @@ body.locked .app{display:none;}
     <div class="modal-actions">
       <button class="btn ghost" id="settingsCancel">Скасувати</button>
       <button class="btn primary" id="settingsSave">Зберегти</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="manualSearchModal">
+  <div class="modal wide">
+    <h3>Ручний пошук по базі</h3>
+    <p class="desc">Якщо автопідбір не знайшов потрібну позицію — знайдіть її самостійно за кодом або частиною назви.</p>
+    <div class="manual-search-target" id="manualSearchTarget"></div>
+    <div class="field" style="margin-bottom:0;">
+      <label class="field-label">Пошук у базі</label>
+      <input type="text" id="manualSearchInput" placeholder="Введіть код або частину назви…" autocomplete="off">
+    </div>
+    <div class="manual-search-results" id="manualSearchResults"></div>
+    <div class="manual-search-hint" id="manualSearchHint"></div>
+    <div class="modal-actions">
+      <button class="btn ghost" id="manualSearchCancel">Закрити</button>
     </div>
   </div>
 </div>
@@ -1333,27 +1374,41 @@ function renderResults(){
 
     let statusHtml, actionHtml='';
     if(r.status==='ok'){
-      statusHtml = r.matchedByName
-        ? `<span class="status-chip ok">✓ знайдено</span><div class="cand" style="margin-top:3px;">за назвою · ${Math.round((r.matchScore||0)*100)}%</div>`
-        : '<span class="status-chip ok">✓ знайдено</span>';
+      statusHtml = r.matchedManually
+        ? '<span class="status-chip ok">✓ знайдено</span><div class="cand" style="margin-top:3px;">вибрано вручну</div>'
+        : (r.matchedByName
+          ? `<span class="status-chip ok">✓ знайдено</span><div class="cand" style="margin-top:3px;">за назвою · ${Math.round((r.matchScore||0)*100)}%</div>`
+          : '<span class="status-chip ok">✓ знайдено</span>');
     }else if(r.status==='suggest'){
       statusHtml = '<span class="status-chip ai">🔍 схожі варіанти</span>';
       const cands = (r._candidates||[]).slice(0, state.candidateCount);
       actionHtml = `<div class="ai-sugg">
           ${cands.map(c=>`<div class="cand">${Math.round(c.score*100)}% · <b>${escapeHtml(c.item.code)}</b> — ${escapeHtml(c.item.name)}
             <div class="ai-actions"><button class="btn small primary" data-act="accept-cand" data-idx="${idx}" data-code="${escapeHtml(c.item.code)}">Прийняти</button></div></div>`).join('')}
-          <div class="ai-actions"><button class="btn small ghost" data-act="reject-suggest" data-idx="${idx}">Відхилити всі</button></div>
+          <div class="ai-actions">
+            <button class="btn small ghost" data-act="reject-suggest" data-idx="${idx}">Відхилити всі</button>
+            <button class="btn small ghost" data-act="manual-search" data-idx="${idx}">🔎 Пошук вручну</button>
+          </div>
         </div>`;
     }else{
       statusHtml = r.noCode
         ? '<span class="status-chip notfound">⚠ без коду</span>'
         : '<span class="status-chip notfound">✕ код не знайдено</span>';
       if(!r._searched){
-        actionHtml = `<button class="btn small" data-act="find" data-idx="${idx}">🔍 Підбір за назвою</button>`;
+        actionHtml = `<div class="ai-actions">
+            <button class="btn small" data-act="find" data-idx="${idx}">🔍 Підбір за назвою</button>
+            <button class="btn small ghost" data-act="manual-search" data-idx="${idx}">🔎 Пошук вручну</button>
+          </div>`;
       }else if(r._candidates && r._candidates.length>0){
-        actionHtml = `<button class="btn small" data-act="toggle-show" data-idx="${idx}">Показати схожі (${r._candidates.length})</button>`;
+        actionHtml = `<div class="ai-actions">
+            <button class="btn small" data-act="toggle-show" data-idx="${idx}">Показати схожі (${r._candidates.length})</button>
+            <button class="btn small ghost" data-act="manual-search" data-idx="${idx}">🔎 Пошук вручну</button>
+          </div>`;
       }else{
-        actionHtml = `<span class="cand">нічого схожого не знайдено</span>`;
+        actionHtml = `<div class="ai-actions">
+            <span class="cand">нічого схожого не знайдено</span>
+            <button class="btn small ghost" data-act="manual-search" data-idx="${idx}">🔎 Пошук вручну</button>
+          </div>`;
       }
     }
 
@@ -1383,6 +1438,7 @@ document.getElementById('resultTableBody').addEventListener('click', (e)=>{
   if(act==='toggle-show') toggleShowCandidates(idx);
   if(act==='accept-cand') acceptCandidate(idx, btn.dataset.code);
   if(act==='reject-suggest') rejectSuggestions(idx);
+  if(act==='manual-search') openManualSearch(idx);
 });
 
 document.getElementById('clearResultBtn').addEventListener('click', ()=>{
@@ -1612,6 +1668,96 @@ function rejectSuggestions(idx){
   r._forceShowCandidates = false;
   renderResults();
 }
+
+/* ============================================================
+   MANUAL SEARCH MODAL — пошук по базі вручну, коли автопідбір
+   не знайшов потрібну позицію.
+   ============================================================ */
+const manualSearchModal = document.getElementById('manualSearchModal');
+const manualSearchInput = document.getElementById('manualSearchInput');
+const manualSearchResultsEl = document.getElementById('manualSearchResults');
+const manualSearchHintEl = document.getElementById('manualSearchHint');
+const MANUAL_SEARCH_LIMIT = 50;
+let manualSearchIdx = null;
+
+function openManualSearch(idx){
+  const r = state.results[idx];
+  if(!r) return;
+  if(!state.baseList || state.baseList.length===0){
+    toast('Спочатку завантажте базу товарів', true);
+    return;
+  }
+  manualSearchIdx = idx;
+  document.getElementById('manualSearchTarget').innerHTML =
+    `Товар з файлу: <b>${escapeHtml(r.code||'без коду')}</b> — ${escapeHtml(r.name||'без назви')}`;
+  manualSearchInput.value = '';
+  renderManualSearchResults('');
+  manualSearchModal.classList.add('show');
+  setTimeout(()=>manualSearchInput.focus(), 30);
+}
+function closeManualSearch(){
+  manualSearchModal.classList.remove('show');
+  manualSearchIdx = null;
+}
+function renderManualSearchResults(query){
+  const q = normalize(query);
+  let list;
+  if(q===''){
+    list = state.baseList.slice(0, MANUAL_SEARCH_LIMIT);
+    manualSearchHintEl.textContent = `Показано перші ${list.length} з ${state.baseList.length.toLocaleString('uk-UA')} товарів бази. Введіть код або назву для пошуку.`;
+  }else{
+    const terms = q.split(' ').filter(Boolean);
+    const matched = state.baseList.filter(item=>{
+      const hay = normalize(item.code) + ' ' + normalize(item.name);
+      return terms.every(t=>hay.includes(t));
+    });
+    list = matched.slice(0, MANUAL_SEARCH_LIMIT);
+    manualSearchHintEl.textContent = matched.length===0
+      ? 'Нічого не знайдено. Спробуйте частину назви або коду.'
+      : (matched.length > MANUAL_SEARCH_LIMIT
+        ? `Знайдено ${matched.length.toLocaleString('uk-UA')}, показано перші ${MANUAL_SEARCH_LIMIT}. Уточніть запит.`
+        : `Знайдено: ${matched.length}`);
+  }
+  if(list.length===0){
+    manualSearchResultsEl.innerHTML = `<div class="manual-search-empty">Нічого не знайдено</div>`;
+    return;
+  }
+  manualSearchResultsEl.innerHTML = list.map(item=>`
+    <div class="manual-search-row" data-code="${escapeHtml(item.code)}">
+      <span class="msr-code">${escapeHtml(item.code)}</span>
+      <span class="msr-name">${escapeHtml(item.name)}</span>
+      <span class="msr-price">${fmtNum(item.price)}${item.currency?(' '+escapeHtml(item.currency)):''}</span>
+    </div>`).join('');
+}
+function selectManualItem(code){
+  if(manualSearchIdx===null) return;
+  const idx = manualSearchIdx;
+  const r = state.results[idx];
+  if(!r) return;
+  const item = state.baseMap.get(code);
+  if(!item){ toast('Товар не знайдено в базі', true); return; }
+  const rebuilt = buildResultRow(item.code, item.name, r.newPrice, item, false, r.listPrice, r.discountPct, r.surchargePct);
+  rebuilt._searched = true;
+  rebuilt._candidates = r._candidates;
+  rebuilt.status = 'ok';
+  rebuilt.matchedByName = false;
+  rebuilt.matchedManually = true;
+  state.results[idx] = rebuilt;
+  closeManualSearch();
+  renderResults();
+  toast('Код застосовано вручну: '+item.code);
+}
+manualSearchInput.addEventListener('input', ()=>renderManualSearchResults(manualSearchInput.value));
+manualSearchResultsEl.addEventListener('click', e=>{
+  const row = e.target.closest('.manual-search-row[data-code]');
+  if(!row) return;
+  selectManualItem(row.dataset.code);
+});
+document.getElementById('manualSearchCancel').addEventListener('click', closeManualSearch);
+manualSearchModal.addEventListener('click', e=>{ if(e.target===manualSearchModal) closeManualSearch(); });
+document.addEventListener('keydown', e=>{
+  if(e.key==='Escape' && manualSearchModal.classList.contains('show')) closeManualSearch();
+});
 
 document.getElementById('aiAllBtn').addEventListener('click', async ()=>{
   const targets = state.results
