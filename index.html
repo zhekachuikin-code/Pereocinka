@@ -574,19 +574,19 @@ body.locked .app{display:none;}
 <div class="modal-bg" id="settingsModal">
   <div class="modal">
     <h3>Налаштування локального підбору</h3>
-    <p class="desc">Зіставлення товарів за назвою відбувається повністю локально, без сервера. Налаштуйте пороги впевненості.</p>
+    <p class="desc">Зіставлення товарів за назвою відбувається повністю локально, без сервера. Пороги нижче стосуються лише масової кнопки «Підібрати всі» — при підборі по одному рядку завжди показується список із 10 варіантів для вибору вручну.</p>
     <div class="field">
       <label class="field-label">Поріг «висока впевненість», %</label>
       <input type="text" id="thresholdHighInput" value="85">
-      <div class="hint">Від цього відсотка збігу назва зіставляється з базою автоматично (статус «знайдено»).</div>
+      <div class="hint">Від цього відсотка збігу товар автоматично зіставляється при масовому підборі «Підібрати всі».</div>
     </div>
     <div class="field">
       <label class="field-label">Поріг «нижня межа», %</label>
       <input type="text" id="thresholdLowInput" value="35">
-      <div class="hint">Нижче цього відсотка товар вважається не знайденим (кандидатів можна викликати вручну кнопкою «Показати схожі»).</div>
+      <div class="hint">Нижче цього відсотка при масовому підборі товар вважається не знайденим.</div>
     </div>
     <div class="field">
-      <label class="field-label">Кількість кандидатів для показу (2–8)</label>
+      <label class="field-label">Кількість кандидатів для показу при масовому підборі (2–8)</label>
       <input type="text" id="candidateCountInput" value="3">
     </div>
     <div class="modal-actions">
@@ -1379,9 +1379,13 @@ function renderResults(){
         : (r.matchedByName
           ? `<span class="status-chip ok">✓ знайдено</span><div class="cand" style="margin-top:3px;">за назвою · ${Math.round((r.matchScore||0)*100)}%</div>`
           : '<span class="status-chip ok">✓ знайдено</span>');
+      actionHtml = `<div class="ai-actions">
+          <button class="btn small ghost" data-act="reopen-match" data-idx="${idx}">Змінити</button>
+          <button class="btn small ghost" data-act="manual-search" data-idx="${idx}">🔎 Пошук вручну</button>
+        </div>`;
     }else if(r.status==='suggest'){
       statusHtml = '<span class="status-chip ai">🔍 схожі варіанти</span>';
-      const cands = (r._candidates||[]).slice(0, state.candidateCount);
+      const cands = r._candidates||[];
       actionHtml = `<div class="ai-sugg">
           ${cands.map(c=>`<div class="cand">${Math.round(c.score*100)}% · <b>${escapeHtml(c.item.code)}</b> — ${escapeHtml(c.item.name)}
             <div class="ai-actions"><button class="btn small primary" data-act="accept-cand" data-idx="${idx}" data-code="${escapeHtml(c.item.code)}">Прийняти</button></div></div>`).join('')}
@@ -1439,6 +1443,7 @@ document.getElementById('resultTableBody').addEventListener('click', (e)=>{
   if(act==='accept-cand') acceptCandidate(idx, btn.dataset.code);
   if(act==='reject-suggest') rejectSuggestions(idx);
   if(act==='manual-search') openManualSearch(idx);
+  if(act==='reopen-match') reopenMatchForRow(idx);
 });
 
 document.getElementById('clearResultBtn').addEventListener('click', ()=>{
@@ -1628,14 +1633,24 @@ function applyMatchDecision(idx, candidates){
   return 'low';
 }
 
+const ROW_CANDIDATE_COUNT = 10; // при ручному підборі по одному рядку — завжди показуємо до 10 варіантів, відсортованих за схожістю
+
 function runLocalMatchForRow(idx){
   const r = state.results[idx];
   if(!r) return;
-  const candidates = findLocalCandidates(r.name || r.code, state.candidateCount);
-  const outcome = applyMatchDecision(idx, candidates);
+  const candidates = findLocalCandidates(r.name || r.code, ROW_CANDIDATE_COUNT); // вже відсортовано за спаданням score у findLocalCandidates
+  r._searched = true;
+  r._candidates = candidates;
+  if(candidates.length===0){
+    r.status = 'notfound';
+    r._forceShowCandidates = false;
+    renderResults();
+    toast('Нічого схожого не знайдено в базі');
+    return;
+  }
+  r.status = 'suggest';
+  r._forceShowCandidates = true;
   renderResults();
-  if(outcome==='none') toast('Нічого схожого не знайдено в базі');
-  else if(outcome==='auto') toast(`Автоматично зіставлено за назвою (${Math.round(candidates[0].score*100)}%)`);
 }
 
 function toggleShowCandidates(idx){
@@ -1646,6 +1661,19 @@ function toggleShowCandidates(idx){
   r.status = 'suggest';
   r._forceShowCandidates = true;
   renderResults();
+}
+
+function reopenMatchForRow(idx){
+  // "Змінити" на вже зіставленому рядку — знову показує список варіантів (або запускає новий пошук, якщо кандидатів ще нема)
+  const r = state.results[idx];
+  if(!r) return;
+  if(r._candidates && r._candidates.length>0){
+    r.status = 'suggest';
+    r._forceShowCandidates = true;
+    renderResults();
+  }else{
+    runLocalMatchForRow(idx);
+  }
 }
 
 function acceptCandidate(idx, code){
