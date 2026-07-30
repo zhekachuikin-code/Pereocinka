@@ -799,6 +799,32 @@ function normalize(s){
   str = str.replace(/\s+/g,' ').trim();
   return str;
 }
+/* ============================================================
+   ПОШУК КОДУ, ЗАШИТОГО ВСЕРЕДИНІ НАЗВИ ТОВАРУ
+   Приклад: 'LEXLINE Вентиль 1 1/2" пар УК1124-ПА, шт' -> код "УК1124-ПА"
+   ============================================================ */
+function normalizeCode(s){
+  // прибираємо пробіли/лапки, у верхній регістр — для точного порівняння токенів
+  return String(s||'').toUpperCase().replace(/["'«»()]/g,'').replace(/\s+/g,'').trim();
+}
+function buildCodeIndex(){
+  const idx = new Map();
+  state.baseMap.forEach((item, code)=>{
+    const norm = normalizeCode(code);
+    if(norm && !idx.has(norm)) idx.set(norm, item);
+  });
+  return idx;
+}
+function extractCodeFromName(name, codeIndex){
+  if(!name || !codeIndex || codeIndex.size===0) return null;
+  // ріжемо назву на токени по пробілах/комах/крапках з комою/дужках — код не містить цих символів
+  const tokens = String(name).split(/[\s,;:()«»"']+/).filter(Boolean);
+  for(const tok of tokens){
+    const norm = normalizeCode(tok);
+    if(norm.length>=3 && codeIndex.has(norm)) return codeIndex.get(norm);
+  }
+  return null;
+}
 function logTo(elId, msg, cls){
   const el = document.getElementById(elId);
   el.classList.add('show');
@@ -1304,13 +1330,23 @@ document.getElementById('compareBtn').addEventListener('click', ()=>{
   const rows = state.priceRows;
   if(!rows || rows.length===0){ toast('Немає даних прайсу для порівняння', true); return; }
 
+  const codeIndex = buildCodeIndex();
   const results = [];
   for(const pr of rows){
-    const base = pr.code ? state.baseMap.get(pr.code) : null;
+    let base = pr.code ? state.baseMap.get(pr.code) : null;
+    let matchedCode = pr.code;
+    let foundInName = false;
+    if(!base){
+      // код не задано окремою колонкою (або не збігся) — шукаємо код, зашитий у самій назві
+      const found = extractCodeFromName(pr.name, codeIndex);
+      if(found){ base = found; matchedCode = found.code; foundInName = true; }
+    }
     if(!base){
       results.push(buildResultRow(pr.code, pr.name, pr.price, null, !pr.code, pr.listPrice, pr.discountPct, pr.surchargePct, pr.name));
     }else{
-      results.push(buildResultRow(pr.code, base.name || pr.name, pr.price, base, false, pr.listPrice, pr.discountPct, pr.surchargePct, pr.name));
+      const row = buildResultRow(matchedCode, base.name || pr.name, pr.price, base, false, pr.listPrice, pr.discountPct, pr.surchargePct, pr.name);
+      if(foundInName) row.matchedByCodeInName = true;
+      results.push(row);
     }
   }
   state.results = results;
@@ -1393,7 +1429,9 @@ function renderResults(){
         ? '<span class="status-chip ok">✓ знайдено</span><div class="cand" style="margin-top:3px;">вибрано вручну</div>'
         : (r.matchedByName
           ? `<span class="status-chip ok">✓ знайдено</span><div class="cand" style="margin-top:3px;">за назвою · ${Math.round((r.matchScore||0)*100)}%</div>`
-          : '<span class="status-chip ok">✓ знайдено</span>');
+          : (r.matchedByCodeInName
+            ? '<span class="status-chip ok">✓ знайдено</span><div class="cand" style="margin-top:3px;">код у назві</div>'
+            : '<span class="status-chip ok">✓ знайдено</span>'));
       actionHtml = `<div class="ai-actions">
           <button class="btn small ghost" data-act="reopen-match" data-idx="${idx}">Змінити</button>
           <button class="btn small ghost" data-act="manual-search" data-idx="${idx}">🔎 Пошук вручну</button>
