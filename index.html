@@ -1668,7 +1668,7 @@ function renderResults(){
         <td>${escapeHtml(r.name)||'<span style=\"color:var(--text-dim)\">—</span>'}</td>
         <td class="mono">${fmtNum(r.listPrice)}</td>
         <td class="mono">${[r.discountPct>0?('-'+r.discountPct+'%'):'', r.surchargePct>0?('+'+r.surchargePct+'%'):''].filter(Boolean).join(' / ') || '—'}</td>
-        <td class="mono">${fmtNum(r.newPrice)}</td>
+        <td class="mono">${fmtNum(roundTo(r.newPrice, 2))}</td>
         <td class="mono">${r.newOpt!==null?fmtNumD(roundTo(r.newOpt, state.roundOptDecimals), state.roundOptDecimals):'—'}${r.defaultMarkup?'<span title="Стандартна націнка +20% (немає даних в базі)" style="color:var(--up);">*</span>':''}</td>
         <td class="mono">${r.newRetail!==null?fmtNumD(roundTo(r.newRetail, state.roundRetailDecimals), state.roundRetailDecimals):'—'}${r.defaultMarkup?'<span title="Стандартна націнка +30% (немає даних в базі)" style="color:var(--up);">*</span>':''}</td>
         <td>${deltaHtml}</td>
@@ -1733,7 +1733,7 @@ document.getElementById('exportBtn').addEventListener('click', ()=>{
       'Ціна прайсу': r.listPrice,
       'Знижка, %': r.discountPct||0,
       'Накидка (доставка), %': r.surchargePct||0,
-      'Ціна закупівлі': Math.round(r.newPrice*100)/100,
+      'Ціна закупівлі': roundTo(r.newPrice, 2),
       'Опт. ціна': r.newOpt!==null?roundTo(r.newOpt, state.roundOptDecimals):'',
       'Розн. ціна': r.newRetail!==null?roundTo(r.newRetail, state.roundRetailDecimals):'',
       'Валюта': r.currency||'',
@@ -1756,7 +1756,7 @@ document.getElementById('exportBtn').addEventListener('click', ()=>{
       'Ціна прайсу': r.listPrice,
       'Знижка, %': r.discountPct||0,
       'Накидка (доставка), %': r.surchargePct||0,
-      'Ціна закупівлі': Math.round(r.newPrice*100)/100,
+      'Ціна закупівлі': roundTo(r.newPrice, 2),
       'Опт. ціна (станд. +20%)': r.newOpt!==null?roundTo(r.newOpt, state.roundOptDecimals):'',
       'Розн. ціна (станд. +30%)': r.newRetail!==null?roundTo(r.newRetail, state.roundRetailDecimals):'',
       'Статус': r.noCode
