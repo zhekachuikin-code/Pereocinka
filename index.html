@@ -1295,9 +1295,9 @@ document.getElementById('compareBtn').addEventListener('click', ()=>{
   for(const pr of rows){
     const base = pr.code ? state.baseMap.get(pr.code) : null;
     if(!base){
-      results.push(buildResultRow(pr.code, pr.name, pr.price, null, !pr.code, pr.listPrice, pr.discountPct, pr.surchargePct));
+      results.push(buildResultRow(pr.code, pr.name, pr.price, null, !pr.code, pr.listPrice, pr.discountPct, pr.surchargePct, pr.name));
     }else{
-      results.push(buildResultRow(pr.code, base.name || pr.name, pr.price, base, false, pr.listPrice, pr.discountPct, pr.surchargePct));
+      results.push(buildResultRow(pr.code, base.name || pr.name, pr.price, base, false, pr.listPrice, pr.discountPct, pr.surchargePct, pr.name));
     }
   }
   state.results = results;
@@ -1309,13 +1309,14 @@ document.getElementById('compareBtn').addEventListener('click', ()=>{
 const DEFAULT_OPT_MARKUP = 1.2;    // +20% опт за замовчуванням
 const DEFAULT_RETAIL_MARKUP = 1.3; // +30% роздріб за замовчуванням
 
-function buildResultRow(code, name, newPrice, base, noCode, listPrice, discountPct, surchargePct){
+function buildResultRow(code, name, newPrice, base, noCode, listPrice, discountPct, surchargePct, origName){
   if(listPrice===undefined) listPrice = newPrice;
   if(discountPct===undefined) discountPct = 0;
   if(surchargePct===undefined) surchargePct = 0;
+  if(origName===undefined) origName = name;
   if(!base){
     return {
-      code, name, newPrice, listPrice, discountPct, surchargePct,
+      code, name, origName, newPrice, listPrice, discountPct, surchargePct,
       newOpt: newPrice * DEFAULT_OPT_MARKUP,
       newRetail: newPrice * DEFAULT_RETAIL_MARKUP,
       currency:'',
@@ -1331,7 +1332,7 @@ function buildResultRow(code, name, newPrice, base, noCode, listPrice, discountP
   const newRetail = newPrice * (hasRetailMarkup ? base.retailMarkup : DEFAULT_RETAIL_MARKUP);
   const pct = base.price>0 ? ((newPrice - base.price)/base.price*100) : null;
   return {
-    code, name, newPrice, listPrice, discountPct, surchargePct,
+    code, name, origName, newPrice, listPrice, discountPct, surchargePct,
     newOpt, newRetail, currency: base.currency,
     basePrice: base.price, pct,
     status:'ok', noCode:false,
@@ -1339,6 +1340,7 @@ function buildResultRow(code, name, newPrice, base, noCode, listPrice, discountP
     defaultMarkup: !(hasOptMarkup && hasRetailMarkup),
   };
 }
+
 
 function renderResults(){
   const tbody = document.getElementById('resultTableBody');
@@ -1615,7 +1617,7 @@ function applyMatchDecision(idx, candidates){
   if(candidates.length===0){ r.status='notfound'; r._forceShowCandidates=false; return 'none'; }
   const top = candidates[0];
   if(top.score >= state.matchThresholdHigh){
-    const rebuilt = buildResultRow(top.item.code, top.item.name, r.newPrice, top.item, false, r.listPrice, r.discountPct, r.surchargePct);
+    const rebuilt = buildResultRow(top.item.code, top.item.name, r.newPrice, top.item, false, r.listPrice, r.discountPct, r.surchargePct, r.origName!==undefined?r.origName:r.name);
     rebuilt._searched = true; rebuilt._candidates = candidates;
     rebuilt.status = 'ok';
     rebuilt.matchedByName = true;
@@ -1664,16 +1666,16 @@ function toggleShowCandidates(idx){
 }
 
 function reopenMatchForRow(idx){
-  // "Змінити" на вже зіставленому рядку — знову показує список варіантів (або запускає новий пошук, якщо кандидатів ще нема)
+  // "Змінити" на вже зіставленому рядку: повертаємо назву до вихідної (прайсової,
+  // а не тієї, що підставилась з бази при попередньому зіставленні) і робимо новий
+  // пошук по ній, щоб список кандидатів будувався від правильного тексту.
   const r = state.results[idx];
   if(!r) return;
-  if(r._candidates && r._candidates.length>0){
-    r.status = 'suggest';
-    r._forceShowCandidates = true;
-    renderResults();
-  }else{
-    runLocalMatchForRow(idx);
-  }
+  const origName = r.origName!==undefined ? r.origName : r.name;
+  r.name = origName;
+  r._candidates = null;
+  r._searched = false;
+  runLocalMatchForRow(idx);
 }
 
 function acceptCandidate(idx, code){
@@ -1681,7 +1683,7 @@ function acceptCandidate(idx, code){
   if(!r || !r._candidates) return;
   const cand = r._candidates.find(c=>c.item.code===code);
   if(!cand) return;
-  const rebuilt = buildResultRow(cand.item.code, cand.item.name, r.newPrice, cand.item, false, r.listPrice, r.discountPct, r.surchargePct);
+  const rebuilt = buildResultRow(cand.item.code, cand.item.name, r.newPrice, cand.item, false, r.listPrice, r.discountPct, r.surchargePct, r.origName!==undefined?r.origName:r.name);
   rebuilt.status = 'ok';
   rebuilt.matchedByName = true;
   rebuilt.matchScore = cand.score;
@@ -1715,9 +1717,11 @@ function openManualSearch(idx){
     toast('Спочатку завантажте базу товарів', true);
     return;
   }
+  const origName = r.origName!==undefined ? r.origName : r.name;
+  r.name = origName; // повертаємо назву до вихідної (прайсової), якщо раніше вона була замінена на назву з бази
   manualSearchIdx = idx;
   document.getElementById('manualSearchTarget').innerHTML =
-    `Товар з файлу: <b>${escapeHtml(r.code||'без коду')}</b> — ${escapeHtml(r.name||'без назви')}`;
+    `Товар з файлу: <b>${escapeHtml(r.code||'без коду')}</b> — ${escapeHtml(origName||'без назви')}`;
   manualSearchInput.value = '';
   renderManualSearchResults('');
   manualSearchModal.classList.add('show');
@@ -1764,7 +1768,7 @@ function selectManualItem(code){
   if(!r) return;
   const item = state.baseMap.get(code);
   if(!item){ toast('Товар не знайдено в базі', true); return; }
-  const rebuilt = buildResultRow(item.code, item.name, r.newPrice, item, false, r.listPrice, r.discountPct, r.surchargePct);
+  const rebuilt = buildResultRow(item.code, item.name, r.newPrice, item, false, r.listPrice, r.discountPct, r.surchargePct, r.origName!==undefined?r.origName:r.name);
   rebuilt._searched = true;
   rebuilt._candidates = r._candidates;
   rebuilt.status = 'ok';
