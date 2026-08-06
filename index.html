@@ -276,7 +276,7 @@ tbody tr.row-ai{background:var(--warn-soft);}
 .modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:18px;}
 
 /* ── MANUAL SEARCH MODAL ── */
-.modal.wide{max-width:min(920px, 94vw);}
+.modal.wide{max-width:640px;}
 .manual-search-target{
   font-size:12px;color:var(--text-muted);background:var(--panel2);border:1px solid var(--border2);
   border-radius:7px;padding:9px 12px;margin-bottom:14px;
@@ -287,14 +287,14 @@ tbody tr.row-ai{background:var(--warn-soft);}
   margin-top:12px;
 }
 .manual-search-row{
-  display:flex;align-items:flex-start;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border);
   cursor:pointer;transition:background .12s;
 }
 .manual-search-row:last-child{border-bottom:none;}
 .manual-search-row:hover{background:var(--accent-soft);}
-.manual-search-row .msr-code{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--accent);flex-shrink:0;width:78px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-top:1px;}
-.manual-search-row .msr-name{flex:1;font-size:12.5px;color:var(--text);white-space:normal;word-break:break-word;line-height:1.4;min-width:0;}
-.manual-search-row .msr-price{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--text-dim);flex-shrink:0;padding-top:1px;}
+.manual-search-row .msr-code{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--accent);flex-shrink:0;width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.manual-search-row .msr-name{flex:1;font-size:12.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.manual-search-row .msr-price{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--text-dim);flex-shrink:0;}
 .manual-search-empty{padding:24px 12px;text-align:center;font-size:12.5px;color:var(--text-dim);}
 .manual-search-hint{font-size:11px;color:var(--text-dim);margin-top:8px;}
 .status-chip.manual{background:rgba(53,208,192,0.14);color:var(--accent);}
@@ -2170,4 +2170,4 @@ restoreLastBase();
 populateSupplierSelect();
 </script>
 </body>
-</html> 
+</html>
