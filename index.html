@@ -864,7 +864,7 @@ async function deleteSupplierProfile(name){
 }
 function emptySupplierProfile(name){
   return { name, mapping:{code:-1,name:-1,name2:-1,price:-1}, headerLabels:{}, hasHeader:null,
-    discountPct:0, surchargePct:0, manualMatches:{}, updatedAt:null };
+    discountPct:0, surchargePct:0, manualMatches:{}, ignoredNames:{}, updatedAt:null };
 }
 async function restoreLastBase(){
   const data = await loadBaseFromDB();
@@ -1541,12 +1541,14 @@ document.getElementById('compareBtn').addEventListener('click', ()=>{
 
   const codeIndex = buildCodeIndex();
   const supplierMatches = (state.currentSupplierProfile && state.currentSupplierProfile.manualMatches) || null;
+  const ignoredNames = (state.currentSupplierProfile && state.currentSupplierProfile.ignoredNames) || null;
   const results = [];
   for(const pr of rows){
-    let base = pr.code ? state.baseMap.get(pr.code) : null;
+    const isIgnored = !!(ignoredNames && ignoredNames[normalize(pr.name)]);
+    let base = (!isIgnored && pr.code) ? state.baseMap.get(pr.code) : null;
     let matchedCode = pr.code;
     let matchSource = base ? null : null;
-    if(!base && supplierMatches){
+    if(!base && !isIgnored && supplierMatches){
       // раніше вручну підтверджене зіставлення для цього постачальника — найнадійніше джерело
       const savedCode = supplierMatches[normalize(pr.name)];
       if(savedCode){
@@ -1554,11 +1556,13 @@ document.getElementById('compareBtn').addEventListener('click', ()=>{
         if(item){ base = item; matchedCode = savedCode; matchSource = 'supplier'; }
       }
     }
-    if(!base){
+    if(!base && !isIgnored){
       // код не задано окремою колонкою (або не збігся) — шукаємо код, зашитий у самій назві
       const found = extractCodeFromName(pr.name, codeIndex);
       if(found){ base = found; matchedCode = found.code; matchSource = 'codeInName'; }
     }
+    // isIgnored: користувач раніше явно натиснув "Забути" для цієї назви — жодне з джерел
+    // вище навіть не перевірялось (base лишився null), рядок завжди йде як "не знайдено"
     if(!base){
       results.push(buildResultRow(pr.code, pr.name, pr.price, null, !pr.code, pr.listPrice, pr.discountPct, pr.surchargePct, pr.name));
     }else{
@@ -2022,7 +2026,7 @@ function forgetMatchForRow(idx){
   const r = state.results[idx];
   if(!r) return;
   const origName = r.origName!==undefined ? r.origName : r.name;
-  forgetSupplierMatch(origName);
+  forgetSupplierMatch(origName, {blacklist:true});
   const cleared = buildResultRow(r.code, origName, r.newPrice, null, r.noCode, r.listPrice, r.discountPct, r.surchargePct, origName);
   state.results[idx] = cleared;
   renderResults();
@@ -2205,19 +2209,32 @@ function rememberSupplierMatch(name, code){
   const profile = state.currentSupplierProfile || emptySupplierProfile(state.currentSupplier);
   profile.manualMatches = profile.manualMatches || {};
   profile.manualMatches[key] = code;
+  profile.ignoredNames = profile.ignoredNames || {};
+  delete profile.ignoredNames[key]; // тепер є справжнє зіставлення — прибираємо з чорного списку, якщо там був
   state.currentSupplierProfile = profile;
   saveSupplierProfile(profile);
   updateSupplierHint();
 }
-function forgetSupplierMatch(name){
+function forgetSupplierMatch(name, opts){
   // видаляє раніше запам'ятоване зіставлення для цього постачальника, щоб воно
-  // більше не підставлялось автоматично при наступній обробці того ж прайсу
+  // більше не підставлялось автоматично при наступній обробці того ж прайсу.
+  // Якщо opts.blacklist===true — додатково заносить назву в чорний список
+  // "точно немає відповідника", який перевіряється РАНІШЕ за будь-яке автоматичне
+  // зіставлення (прямий код, пам'ять, код у назві), інакше воно повернеться знову.
   if(!state.currentSupplier) return;
-  const profile = state.currentSupplierProfile;
-  if(!profile || !profile.manualMatches) return;
+  const profile = state.currentSupplierProfile || emptySupplierProfile(state.currentSupplier);
   const key = normalize(name);
-  if(!key || !(key in profile.manualMatches)) return;
+  if(!key) return;
+  profile.manualMatches = profile.manualMatches || {};
+  profile.ignoredNames = profile.ignoredNames || {};
+  const hadMemory = key in profile.manualMatches;
   delete profile.manualMatches[key];
+  let changed = hadMemory;
+  if(opts && opts.blacklist && !profile.ignoredNames[key]){
+    profile.ignoredNames[key] = true;
+    changed = true;
+  }
+  if(!changed) return;
   state.currentSupplierProfile = profile;
   saveSupplierProfile(profile);
   updateSupplierHint();
