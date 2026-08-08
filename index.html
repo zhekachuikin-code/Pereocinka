@@ -260,6 +260,27 @@ tbody tr.row-ai{background:var(--warn-soft);}
 .toast.err .dot{background:var(--danger);}
 
 .empty-state{padding:40px 20px;text-align:center;color:var(--text-dim);}
+
+/* ── RESULT SEARCH ── */
+.result-search-row{display:flex;align-items:center;gap:12px;margin-bottom:12px;}
+.result-search-box{
+  flex:1;max-width:420px;display:flex;align-items:center;gap:7px;
+  background:var(--bg);border:1px solid var(--border2);border-radius:8px;padding:7px 10px;
+  transition:border-color .12s;
+}
+.result-search-box:focus-within{border-color:var(--accent);}
+.result-search-box .rs-ic{font-size:12px;opacity:.6;flex-shrink:0;}
+.result-search-box input{
+  flex:1;background:transparent;border:none;outline:none;color:var(--text);
+  font-family:'IBM Plex Sans',sans-serif;font-size:12.5px;
+}
+.result-search-box input::placeholder{color:var(--text-dim);}
+.result-search-box .rs-clear{
+  background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:12px;padding:2px 4px;
+  border-radius:4px;flex-shrink:0;
+}
+.result-search-box .rs-clear:hover{color:var(--text);background:var(--panel2);}
+.result-search-count{font-size:11.5px;color:var(--text-dim);font-family:'IBM Plex Mono',monospace;white-space:nowrap;}
 .empty-state .ic{font-family:'IBM Plex Mono',monospace;font-size:26px;color:var(--border2);margin-bottom:10px;}
 .empty-state p{font-size:12.5px;}
 
@@ -574,6 +595,14 @@ body.locked .app{display:none;}
         <progress class="bar" id="resultProgressBar" value="0" max="100"></progress>
       </div>
       <p class="hint" style="margin-bottom:10px;"><span style="color:var(--up);">*</span> — застосована стандартна націнка (+20% опт / +30% роздріб): товар не знайдено в базі, або в базі немає ціни/націнки для нього.</p>
+      <div class="result-search-row">
+        <div class="result-search-box">
+          <span class="rs-ic">🔎</span>
+          <input type="text" id="resultSearchInput" placeholder="Пошук по коду або назві…" autocomplete="off">
+          <button class="rs-clear" id="resultSearchClear" title="Очистити пошук" style="display:none;">✕</button>
+        </div>
+        <div class="result-search-count" id="resultSearchCount"></div>
+      </div>
       <div class="table-wrap">
         <table id="resultTable">
           <colgroup>
@@ -596,6 +625,10 @@ body.locked .app{display:none;}
         <div class="empty-state" id="resultEmpty">
           <div class="ic">▦</div>
           <p>Тут з'являться результати після порівняння прайсу з базою</p>
+        </div>
+        <div class="empty-state" id="resultSearchEmpty" style="display:none;">
+          <div class="ic">🔎</div>
+          <p>Нічого не знайдено за запитом «<span id="resultSearchEmptyQuery"></span>»</p>
         </div>
       </div>
     </div>
@@ -708,6 +741,7 @@ const state = {
   baseLoadedAt: null,
   priceRows: [],            // [{code,name,price}]
   results: [],              // see buildResultRow()
+  resultSearchQuery: '',    // поточний пошуковий запит по таблиці результатів переоцінки
   matchThresholdHigh: 0.85, // score ≥ це — автоматичне зіставлення за назвою
   matchThresholdLow: 0.35,  // score < це — вважається "не знайдено"
   candidateCount: 3,        // скільки кандидатів показувати користувачу
@@ -1535,6 +1569,9 @@ document.getElementById('compareBtn').addEventListener('click', ()=>{
     }
   }
   state.results = results;
+  state.resultSearchQuery = '';
+  const rsi = document.getElementById('resultSearchInput');
+  if(rsi){ rsi.value=''; document.getElementById('resultSearchClear').style.display='none'; }
   renderResults();
   goToTab('result');
   toast(`Порівняно ${results.length} товарів`);
@@ -1576,9 +1613,15 @@ function buildResultRow(code, name, newPrice, base, noCode, listPrice, discountP
 }
 
 
+function matchesResultSearch(r, terms){
+  if(terms.length===0) return true;
+  const hay = (String(r.code||'')+' '+String(r.name||'')+' '+String(r.origName||'')).toLowerCase();
+  return terms.every(t=>hay.includes(t));
+}
 function renderResults(){
   const tbody = document.getElementById('resultTableBody');
   const empty = document.getElementById('resultEmpty');
+  const searchEmpty = document.getElementById('resultSearchEmpty');
   tbody.innerHTML = '';
   const n = state.results.length;
   document.getElementById('resultCountPill').textContent = n;
@@ -1591,11 +1634,23 @@ function renderResults(){
   document.getElementById('statDown').textContent = state.results.filter(r=>r.pct!==null && r.pct<-0.001).length;
   document.getElementById('statMissing').textContent = missing;
 
-  if(n===0){ empty.style.display='block'; return; }
+  if(n===0){
+    empty.style.display='block';
+    searchEmpty.style.display='none';
+    document.getElementById('resultSearchCount').textContent = '';
+    return;
+  }
   empty.style.display='none';
 
+  const query = (state.resultSearchQuery||'').trim();
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const countEl = document.getElementById('resultSearchCount');
+
   const frag = document.createDocumentFragment();
+  let shown = 0;
   state.results.forEach((r, idx)=>{
+    if(!matchesResultSearch(r, terms)) return; // рядок не відповідає пошуковому запиту — пропускаємо, але idx лишається прив'язаним до state.results
+    shown++;
     const tr = document.createElement('tr');
     if(r.status==='notfound') tr.className='row-danger';
     else if(r.status==='suggest') tr.className='row-ai';
@@ -1622,6 +1677,7 @@ function renderResults(){
       actionHtml = `<div class="ai-actions">
           <button class="btn small ghost" data-act="reopen-match" data-idx="${idx}">Змінити</button>
           <button class="btn small ghost" data-act="manual-search" data-idx="${idx}">🔎 Пошук вручну</button>
+          <button class="btn small ghost" data-act="forget-match" data-idx="${idx}" title="Товару точно немає в базі — очистити зіставлення без повторного пошуку">🗑 Забути</button>
         </div>`;
     }else if(r.status==='suggest'){
       statusHtml = '<span class="status-chip ai">🔍 схожі варіанти</span>';
@@ -1690,6 +1746,15 @@ function renderResults(){
     frag.appendChild(tr);
   });
   tbody.appendChild(frag);
+
+  if(query){
+    countEl.textContent = `Знайдено: ${shown} з ${n}`;
+    searchEmpty.style.display = shown===0 ? 'block' : 'none';
+    document.getElementById('resultSearchEmptyQuery').textContent = query;
+  }else{
+    countEl.textContent = '';
+    searchEmpty.style.display = 'none';
+  }
 }
 
 document.getElementById('resultTableBody').addEventListener('click', (e)=>{
@@ -1703,15 +1768,42 @@ document.getElementById('resultTableBody').addEventListener('click', (e)=>{
   if(act==='reject-suggest') rejectSuggestions(idx);
   if(act==='manual-search') openManualSearch(idx);
   if(act==='reopen-match') reopenMatchForRow(idx);
+  if(act==='forget-match') forgetMatchForRow(idx);
 });
 
 document.getElementById('clearResultBtn').addEventListener('click', ()=>{
   if(state.results.length===0) return;
   if(!confirm('Очистити результати переоцінки?')) return;
   state.results = [];
+  state.resultSearchQuery = '';
+  document.getElementById('resultSearchInput').value = '';
+  document.getElementById('resultSearchClear').style.display = 'none';
   renderResults();
   toast('Результати очищено');
 });
+
+/* ── Пошук по таблиці результатів переоцінки ── */
+{
+  const resultSearchInput = document.getElementById('resultSearchInput');
+  const resultSearchClear = document.getElementById('resultSearchClear');
+  let searchDebounce = null;
+  resultSearchInput.addEventListener('input', e=>{
+    const val = e.target.value;
+    resultSearchClear.style.display = val ? 'inline-flex' : 'none';
+    clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(()=>{
+      state.resultSearchQuery = val;
+      renderResults();
+    }, 120); // невеликий дебаунс, щоб не перемальовувати таблицю на кожен символ при великих обсягах
+  });
+  resultSearchClear.addEventListener('click', ()=>{
+    resultSearchInput.value = '';
+    resultSearchClear.style.display = 'none';
+    state.resultSearchQuery = '';
+    renderResults();
+    resultSearchInput.focus();
+  });
+}
 
 document.getElementById('roundOptSelect').addEventListener('change', e=>{
   state.roundOptDecimals = parseInt(e.target.value, 10);
@@ -1923,14 +2015,32 @@ function toggleShowCandidates(idx){
   renderResults();
 }
 
+function forgetMatchForRow(idx){
+  // "Забути" — для випадків, коли користувач ВПЕВНЕНИЙ, що товару немає в базі
+  // постачальника: одразу очищає запам'ятоване зіставлення і скидає рядок у
+  // "не знайдено", без проміжного відкриття списку кандидатів чи ручного пошуку.
+  const r = state.results[idx];
+  if(!r) return;
+  const origName = r.origName!==undefined ? r.origName : r.name;
+  forgetSupplierMatch(origName);
+  const cleared = buildResultRow(r.code, origName, r.newPrice, null, r.noCode, r.listPrice, r.discountPct, r.surchargePct, origName);
+  state.results[idx] = cleared;
+  renderResults();
+  toast('Зіставлення забуто — наступного разу не підставиться автоматично');
+}
 function reopenMatchForRow(idx){
   // "Змінити" на вже зіставленому рядку: повертаємо назву до вихідної (прайсової,
   // а не тієї, що підставилась з бази при попередньому зіставленні) і робимо новий
   // пошук по ній, щоб список кандидатів будувався від правильного тексту.
+  // Заодно забуваємо попереднє зіставлення в пам'яті постачальника — сам факт того,
+  // що користувач хоче змінити результат, означає, що воно було невірним і не
+  // повинно підставлятись автоматично при наступній обробці цього ж прайсу.
   const r = state.results[idx];
   if(!r) return;
   const origName = r.origName!==undefined ? r.origName : r.name;
+  forgetSupplierMatch(origName);
   r.name = origName;
+  r.matchedBySupplierMemory = false;
   r._candidates = null;
   r._searched = false;
   runLocalMatchForRow(idx);
@@ -1978,7 +2088,9 @@ function openManualSearch(idx){
     return;
   }
   const origName = r.origName!==undefined ? r.origName : r.name;
+  forgetSupplierMatch(origName); // користувач вирішив змінити зіставлення — старе запам'ятоване значення більше не актуальне
   r.name = origName; // повертаємо назву до вихідної (прайсової), якщо раніше вона була замінена на назву з бази
+  r.matchedBySupplierMemory = false;
   manualSearchIdx = idx;
   document.getElementById('manualSearchTarget').innerHTML =
     `Товар з файлу: <b>${escapeHtml(r.code||'без коду')}</b> — ${escapeHtml(origName||'без назви')}`;
@@ -2093,6 +2205,19 @@ function rememberSupplierMatch(name, code){
   const profile = state.currentSupplierProfile || emptySupplierProfile(state.currentSupplier);
   profile.manualMatches = profile.manualMatches || {};
   profile.manualMatches[key] = code;
+  state.currentSupplierProfile = profile;
+  saveSupplierProfile(profile);
+  updateSupplierHint();
+}
+function forgetSupplierMatch(name){
+  // видаляє раніше запам'ятоване зіставлення для цього постачальника, щоб воно
+  // більше не підставлялось автоматично при наступній обробці того ж прайсу
+  if(!state.currentSupplier) return;
+  const profile = state.currentSupplierProfile;
+  if(!profile || !profile.manualMatches) return;
+  const key = normalize(name);
+  if(!key || !(key in profile.manualMatches)) return;
+  delete profile.manualMatches[key];
   state.currentSupplierProfile = profile;
   saveSupplierProfile(profile);
   updateSupplierHint();
