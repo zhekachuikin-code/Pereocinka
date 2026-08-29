@@ -468,6 +468,9 @@ body.locked .app{display:none;}
           </select>
           <button class="btn small" id="newSupplierBtn">+ Новий постачальник</button>
           <button class="btn small danger-outline" id="deleteSupplierBtn" style="display:none;">Видалити профіль</button>
+          <button class="btn small" id="exportSuppliersBtn">Експорт бази</button>
+          <button class="btn small" id="importSuppliersBtn">Імпорт бази</button>
+          <input type="file" id="importSuppliersFile" accept=".json,.xlsx" style="display:none;">
         </div>
         <div id="supplierHint" style="font-size:11.5px;color:var(--text-dim);margin-top:7px;"></div>
       </div>
@@ -682,6 +685,59 @@ body.locked .app{display:none;}
 </div>
 
 <div class="toast" id="toast"><span class="dot"></span><span id="toastText"></span></div>
+
+<div class="modal-bg" id="exportSuppliersModal">
+  <div class="modal">
+    <h3>Експорт бази постачальників</h3>
+    <p class="desc">Оберіть постачальників (структура колонок, знижка/накидка та запам'ятовані зіставлення назв), яких потрібно зберегти у файл.</p>
+    <div class="btn-row" style="margin-bottom:8px;">
+      <a href="#" id="exportSuppliersSelectAll" style="font-size:12px;color:var(--accent);text-decoration:none;">Обрати всіх</a>
+      <span style="color:var(--text-dim);">·</span>
+      <a href="#" id="exportSuppliersSelectNone" style="font-size:12px;color:var(--accent);text-decoration:none;">Зняти всі</a>
+    </div>
+    <div id="exportSuppliersList" style="max-height:240px;overflow:auto;border:1px solid var(--border2);border-radius:7px;padding:4px 10px;"></div>
+    <div class="field" style="margin-top:14px;margin-bottom:0;">
+      <label class="field-label">Формат файлу</label>
+      <div class="btn-row" style="gap:16px;">
+        <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;cursor:pointer;">
+          <input type="radio" name="exportSuppliersFormat" value="json" checked> JSON — повний, для перенесення в іншу переоцінку
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;cursor:pointer;">
+          <input type="radio" name="exportSuppliersFormat" value="xlsx"> Excel — для перегляду / ручного редагування
+        </label>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn ghost" id="exportSuppliersCancel">Скасувати</button>
+      <button class="btn primary" id="exportSuppliersConfirm">Експортувати</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="importConflictModal">
+  <div class="modal">
+    <h3>Постачальник «<span id="importConflictName"></span>» вже існує</h3>
+    <p class="desc">У базі вже є профіль з такою назвою. Оберіть, що зробити з профілем, який імпортується.</p>
+    <div class="btn-row" style="flex-direction:column;align-items:stretch;gap:8px;">
+      <button class="btn" id="importConflict_overwrite" style="width:100%;">Перезаписати існуючий профіль</button>
+      <button class="btn" id="importConflict_merge" style="width:100%;">Об'єднати (додати зіставлення, оновити решту)</button>
+      <button class="btn ghost" id="importConflict_skip" style="width:100%;">Пропустити цього постачальника</button>
+    </div>
+    <div class="field" style="margin-top:14px;">
+      <label class="field-label">Або зберегти під новою назвою</label>
+      <div class="btn-row">
+        <input type="text" id="importConflictRenameInput" style="flex:1;">
+        <button class="btn small" id="importConflict_rename">Перейменувати та додати</button>
+      </div>
+    </div>
+    <label style="display:flex;align-items:center;gap:6px;margin-top:14px;font-size:12px;color:var(--text-dim);cursor:pointer;">
+      <input type="checkbox" id="importConflictApplyAll"> Застосувати цей вибір до всіх наступних збігів
+    </label>
+    <div class="modal-actions">
+      <button class="btn ghost" id="importConflictAbort">Скасувати імпорт</button>
+    </div>
+  </div>
+</div>
 
 <script>
 /* ============================================================
@@ -2339,6 +2395,242 @@ document.getElementById('deleteSupplierBtn').addEventListener('click', async ()=
   await populateSupplierSelect('');
   updateSupplierHint();
 });
+
+/* ============================================================
+   ЕКСПОРТ / ІМПОРТ БАЗИ ПОСТАЧАЛЬНИКІВ
+   ============================================================ */
+const exportSuppliersModal = document.getElementById('exportSuppliersModal');
+
+document.getElementById('exportSuppliersBtn').addEventListener('click', async ()=>{
+  const profiles = await loadAllSupplierProfiles();
+  if(profiles.length===0){ toast('Немає жодного збереженого постачальника для експорту', true); return; }
+  profiles.sort((a,b)=>a.name.localeCompare(b.name,'uk'));
+  document.getElementById('exportSuppliersList').innerHTML = profiles.map(p=>{
+    const matchCount = Object.keys(p.manualMatches||{}).length;
+    const updated = p.updatedAt ? new Date(p.updatedAt).toLocaleDateString('uk-UA') : '';
+    return `<label style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border2);font-size:12.5px;cursor:pointer;">
+      <input type="checkbox" class="export-supplier-cb" value="${escapeHtml(p.name)}" checked>
+      <span style="flex:1;">${escapeHtml(p.name)}</span>
+      <span style="color:var(--text-dim);font-size:11px;">${matchCount} зіставлень${updated?', оновлено '+updated:''}</span>
+    </label>`;
+  }).join('');
+  exportSuppliersModal.classList.add('show');
+});
+document.getElementById('exportSuppliersSelectAll').addEventListener('click', (e)=>{
+  e.preventDefault();
+  document.querySelectorAll('.export-supplier-cb').forEach(cb=>cb.checked=true);
+});
+document.getElementById('exportSuppliersSelectNone').addEventListener('click', (e)=>{
+  e.preventDefault();
+  document.querySelectorAll('.export-supplier-cb').forEach(cb=>cb.checked=false);
+});
+document.getElementById('exportSuppliersCancel').addEventListener('click', ()=>exportSuppliersModal.classList.remove('show'));
+exportSuppliersModal.addEventListener('click', e=>{ if(e.target===exportSuppliersModal) exportSuppliersModal.classList.remove('show'); });
+
+document.getElementById('exportSuppliersConfirm').addEventListener('click', async ()=>{
+  const checked = Array.from(document.querySelectorAll('.export-supplier-cb:checked')).map(cb=>cb.value);
+  if(checked.length===0){ toast('Оберіть хоча б одного постачальника', true); return; }
+  const profiles = await loadAllSupplierProfiles();
+  const selected = profiles.filter(p=>checked.includes(p.name));
+  const format = document.querySelector('input[name="exportSuppliersFormat"]:checked').value;
+  const dateStr = new Date().toISOString().slice(0,10);
+  if(format==='json'){
+    const payload = { app:'pereotsinka', type:'suppliers', version:1, exportedAt:new Date().toISOString(), profiles:selected };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `Постачальники_${dateStr}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }else{
+    exportSuppliersXlsx(selected, dateStr);
+  }
+  exportSuppliersModal.classList.remove('show');
+  toast(`Експортовано постачальників: ${selected.length}`);
+});
+
+function rowsToSheet(headers, rows){
+  const aoa = [headers, ...rows.map(r=>headers.map(h=>r[h]))];
+  return XLSX.utils.aoa_to_sheet(aoa);
+}
+function exportSuppliersXlsx(profiles, dateStr){
+  const mainHeaders = ['Постачальник','Знижка, %','Накидка, %','Колонка: Код','Колонка: Назва','Колонка: Назва2','Колонка: Ціна','Є шапка','Підписи шапки (JSON)','Оновлено'];
+  const mainRows = profiles.map(p=>({
+    'Постачальник': p.name,
+    'Знижка, %': p.discountPct||0,
+    'Накидка, %': p.surchargePct||0,
+    'Колонка: Код': p.mapping ? p.mapping.code : -1,
+    'Колонка: Назва': p.mapping ? p.mapping.name : -1,
+    'Колонка: Назва2': p.mapping ? p.mapping.name2 : -1,
+    'Колонка: Ціна': p.mapping ? p.mapping.price : -1,
+    'Є шапка': p.hasHeader===true ? 'так' : (p.hasHeader===false ? 'ні' : ''),
+    'Підписи шапки (JSON)': JSON.stringify(p.headerLabels||{}),
+    'Оновлено': p.updatedAt || '',
+  }));
+  const matchHeaders = ['Постачальник','Назва в прайсі','Код у базі'];
+  const matchRows = [];
+  profiles.forEach(p=>Object.entries(p.manualMatches||{}).forEach(([name, code])=>{
+    matchRows.push({'Постачальник': p.name, 'Назва в прайсі': name, 'Код у базі': code});
+  }));
+  const ignoreHeaders = ['Постачальник','Ігнорована назва'];
+  const ignoreRows = [];
+  profiles.forEach(p=>Object.keys(p.ignoredNames||{}).forEach(name=>{
+    ignoreRows.push({'Постачальник': p.name, 'Ігнорована назва': name});
+  }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, rowsToSheet(mainHeaders, mainRows), 'Постачальники');
+  XLSX.utils.book_append_sheet(wb, rowsToSheet(matchHeaders, matchRows), 'Зіставлення');
+  XLSX.utils.book_append_sheet(wb, rowsToSheet(ignoreHeaders, ignoreRows), 'Ігнор');
+  XLSX.writeFile(wb, `Постачальники_${dateStr}.xlsx`);
+}
+async function parseSuppliersXlsx(file){
+  const data = await file.arrayBuffer();
+  const wb = XLSX.read(data, {type:'array'});
+  const mainWs = wb.Sheets['Постачальники'];
+  if(!mainWs) throw new Error('у файлі немає аркуша «Постачальники»');
+  const mainRows = XLSX.utils.sheet_to_json(mainWs, {defval:''});
+  const matchRows = wb.Sheets['Зіставлення'] ? XLSX.utils.sheet_to_json(wb.Sheets['Зіставлення'], {defval:''}) : [];
+  const ignoreRows = wb.Sheets['Ігнор'] ? XLSX.utils.sheet_to_json(wb.Sheets['Ігнор'], {defval:''}) : [];
+
+  const profiles = mainRows.filter(r=>r['Постачальник']).map(r=>{
+    let headerLabels = {};
+    try{ headerLabels = JSON.parse(r['Підписи шапки (JSON)']||'{}'); }catch(e){}
+    return {
+      name: String(r['Постачальник']),
+      discountPct: Number(r['Знижка, %'])||0,
+      surchargePct: Number(r['Накидка, %'])||0,
+      mapping: {
+        code: Number(r['Колонка: Код']), name: Number(r['Колонка: Назва']),
+        name2: Number(r['Колонка: Назва2']), price: Number(r['Колонка: Ціна']),
+      },
+      hasHeader: r['Є шапка']==='так' ? true : (r['Є шапка']==='ні' ? false : null),
+      headerLabels, manualMatches:{}, ignoredNames:{}, updatedAt: r['Оновлено']||null,
+    };
+  });
+  const byName = new Map(profiles.map(p=>[p.name,p]));
+  matchRows.forEach(r=>{
+    const p = byName.get(String(r['Постачальник']));
+    if(p && r['Назва в прайсі']!=='') p.manualMatches[String(r['Назва в прайсі'])] = String(r['Код у базі']);
+  });
+  ignoreRows.forEach(r=>{
+    const p = byName.get(String(r['Постачальник']));
+    if(p && r['Ігнорована назва']!=='') p.ignoredNames[String(r['Ігнорована назва'])] = true;
+  });
+  return profiles;
+}
+
+document.getElementById('importSuppliersBtn').addEventListener('click', ()=>{
+  document.getElementById('importSuppliersFile').click();
+});
+document.getElementById('importSuppliersFile').addEventListener('change', async (e)=>{
+  const file = e.target.files[0];
+  e.target.value = '';
+  if(!file) return;
+  try{
+    let profiles;
+    if(/\.json$/i.test(file.name)){
+      const payload = JSON.parse(await file.text());
+      profiles = Array.isArray(payload) ? payload : payload.profiles;
+      if(!Array.isArray(profiles)) throw new Error('невірна структура файлу');
+    }else if(/\.xlsx$/i.test(file.name)){
+      profiles = await parseSuppliersXlsx(file);
+    }else{
+      throw new Error('підтримуються лише файли .json та .xlsx');
+    }
+    profiles = profiles.filter(p=>p && p.name).map(p=>Object.assign(emptySupplierProfile(String(p.name)), p, {name:String(p.name)}));
+    if(profiles.length===0){ toast('У файлі не знайдено жодного постачальника', true); return; }
+    await importSuppliersFlow(profiles);
+  }catch(err){
+    console.error(err);
+    toast('Не вдалося прочитати файл: '+err.message, true);
+  }
+});
+
+const importConflictModal = document.getElementById('importConflictModal');
+let importConflictResolver = null;
+let importApplyAllChoice = null;
+
+function askImportConflict(name){
+  if(importApplyAllChoice) return Promise.resolve({choice:importApplyAllChoice});
+  return new Promise(resolve=>{
+    document.getElementById('importConflictName').textContent = name;
+    document.getElementById('importConflictRenameInput').value = name + ' (2)';
+    document.getElementById('importConflictApplyAll').checked = false;
+    importConflictModal.classList.add('show');
+    importConflictResolver = resolve;
+  });
+}
+function resolveImportConflict(choice, extra){
+  if(!importConflictResolver) return;
+  const applyAll = document.getElementById('importConflictApplyAll').checked;
+  importConflictModal.classList.remove('show');
+  if(applyAll && (choice==='overwrite'||choice==='merge'||choice==='skip')) importApplyAllChoice = choice;
+  const resolve = importConflictResolver;
+  importConflictResolver = null;
+  resolve({choice, extra});
+}
+document.getElementById('importConflict_overwrite').addEventListener('click', ()=>resolveImportConflict('overwrite'));
+document.getElementById('importConflict_merge').addEventListener('click', ()=>resolveImportConflict('merge'));
+document.getElementById('importConflict_skip').addEventListener('click', ()=>resolveImportConflict('skip'));
+document.getElementById('importConflict_rename').addEventListener('click', ()=>{
+  const newName = document.getElementById('importConflictRenameInput').value.trim();
+  if(!newName){ toast('Введіть нову назву', true); return; }
+  resolveImportConflict('rename', newName);
+});
+document.getElementById('importConflictAbort').addEventListener('click', ()=>resolveImportConflict('abort'));
+
+async function importSuppliersFlow(profiles){
+  importApplyAllChoice = null;
+  let added=0, overwritten=0, merged=0, skipped=0, renamed=0, aborted=false;
+  for(const incoming of profiles){
+    if(aborted) break;
+    let name = incoming.name;
+    // унікалізуємо ім'я, якщо воно вже було зайняте попереднім перейменуванням у цьому ж імпорті
+    const existing = await loadSupplierProfile(name);
+    if(!existing){
+      incoming.name = name;
+      await saveSupplierProfile(incoming);
+      added++;
+      continue;
+    }
+    const {choice, extra} = await askImportConflict(name);
+    if(choice==='abort'){ aborted = true; break; }
+    if(choice==='skip'){ skipped++; continue; }
+    if(choice==='overwrite'){
+      incoming.name = name;
+      await saveSupplierProfile(incoming);
+      overwritten++;
+    }else if(choice==='merge'){
+      const mergedProfile = Object.assign({}, existing);
+      mergedProfile.mapping = incoming.mapping || existing.mapping;
+      mergedProfile.headerLabels = incoming.headerLabels || existing.headerLabels;
+      mergedProfile.hasHeader = (incoming.hasHeader!==null && incoming.hasHeader!==undefined) ? incoming.hasHeader : existing.hasHeader;
+      mergedProfile.discountPct = incoming.discountPct || existing.discountPct;
+      mergedProfile.surchargePct = incoming.surchargePct || existing.surchargePct;
+      mergedProfile.manualMatches = Object.assign({}, existing.manualMatches||{}, incoming.manualMatches||{});
+      mergedProfile.ignoredNames = Object.assign({}, existing.ignoredNames||{}, incoming.ignoredNames||{});
+      mergedProfile.name = name;
+      await saveSupplierProfile(mergedProfile);
+      merged++;
+    }else if(choice==='rename'){
+      let newName = extra;
+      // якщо й нова назва вже зайнята — додаємо лічильник, поки не знайдемо вільну
+      let i = 2;
+      while(await loadSupplierProfile(newName)){ newName = extra + ' (' + i + ')'; i++; }
+      incoming.name = newName;
+      await saveSupplierProfile(incoming);
+      renamed++;
+    }
+  }
+  await populateSupplierSelect(state.currentSupplier);
+  const parts = [];
+  if(added) parts.push(`нових: ${added}`);
+  if(overwritten) parts.push(`перезаписано: ${overwritten}`);
+  if(merged) parts.push(`об'єднано: ${merged}`);
+  if(renamed) parts.push(`перейменовано: ${renamed}`);
+  if(skipped) parts.push(`пропущено: ${skipped}`);
+  toast((aborted ? 'Імпорт перервано. ' : 'Імпорт завершено. ') + (parts.join(', ') || 'нічого не додано'), aborted);
+}
 
 /* init */
 refreshBaseUI();
