@@ -575,6 +575,7 @@ body.locked .app{display:none;}
               <option value="0">0 знаків</option>
               <option value="1">1 знак</option>
               <option value="2" selected>2 знаки</option>
+              <option value="3">3 знаки</option>
             </select>
           </label>
           <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-muted);">
@@ -583,6 +584,7 @@ body.locked .app{display:none;}
               <option value="0">0 знаків</option>
               <option value="1">1 знак</option>
               <option value="2" selected>2 знаки</option>
+              <option value="3">3 знаки</option>
             </select>
           </label>
           <button class="btn small" id="aiAllBtn">🔍 Підбір за назвою: обробити всі невідомі</button>
@@ -908,6 +910,34 @@ function roundTo(n, decimals){
   const f = Math.pow(10, decimals);
   // округлення вгору (ceil), з компенсацією похибки плаваючої коми
   return Math.ceil((n*f) - 1e-9) / f;
+}
+function decimalsOf(n){
+  // визначає кількість знаків після коми у числі (напр. ціна з прайсу),
+  // щоб не втрачати "зайву" точність (0,042 і т.п.). Максимум — 3 знаки.
+  if(n===null||n===undefined||isNaN(n)) return 0;
+  const s = n.toString();
+  const i = s.indexOf('.');
+  if(i<0) return 0;
+  return Math.min(s.length - i - 1, 3);
+}
+function purchaseDecimals(r){
+  // ціна закупівлі: якщо в прайсі було 3 знаки після коми — лишаємо 3,
+  // інакше стандартні 2 (щоб не змінювати поведінку для звичайних прайсів)
+  return Math.max(2, decimalsOf(r ? r.listPrice : 0));
+}
+function roundedOptRetail(r){
+  // округлення опт./розн. ціни (завжди вгору — див. roundTo) з гарантією,
+  // що роздрібна ціна не «зливається» з опт. і не опускається нижче неї:
+  // якщо після округлення розн. <= опт., піднімаємо розн. на 1 крок округлення.
+  const optDec = state.roundOptDecimals;
+  const retailDec = state.roundRetailDecimals;
+  const opt = (r.newOpt!==null && r.newOpt!==undefined) ? roundTo(r.newOpt, optDec) : null;
+  let retail = (r.newRetail!==null && r.newRetail!==undefined) ? roundTo(r.newRetail, retailDec) : null;
+  if(opt!==null && retail!==null && retail<=opt){
+    const step = 1/Math.pow(10, retailDec);
+    retail = roundTo(opt + step, retailDec);
+  }
+  return {opt, retail};
 }
 function sanitizeFileNamePart(s){
   // прибирає символи, недопустимі у назвах файлів, і замінює пробіли на "_"
@@ -1734,14 +1764,15 @@ function renderResults(){
         </td>
       `;
     }else{
+      const rr = roundedOptRetail(r);
       tr.innerHTML = `
         <td class="mono code-cell">${escapeHtml(r.code)}</td>
         <td>${escapeHtml(r.name)||'<span style=\"color:var(--text-dim)\">—</span>'}</td>
         <td class="mono">${fmtPrice(r.listPrice)}</td>
         <td class="mono">${[r.discountPct>0?('-'+r.discountPct+'%'):'', r.surchargePct>0?('+'+r.surchargePct+'%'):''].filter(Boolean).join(' / ') || '—'}</td>
-        <td class="mono">${fmtNum(roundTo(r.newPrice, 2))}</td>
-        <td class="mono">${r.newOpt!==null?fmtNumD(roundTo(r.newOpt, state.roundOptDecimals), state.roundOptDecimals):'—'}${r.defaultMarkup?'<span title="Стандартна націнка +20% (немає даних в базі)" style="color:var(--up);">*</span>':''}</td>
-        <td class="mono">${r.newRetail!==null?fmtNumD(roundTo(r.newRetail, state.roundRetailDecimals), state.roundRetailDecimals):'—'}${r.defaultMarkup?'<span title="Стандартна націнка +30% (немає даних в базі)" style="color:var(--up);">*</span>':''}</td>
+        <td class="mono">${fmtNumD(roundTo(r.newPrice, purchaseDecimals(r)), purchaseDecimals(r))}</td>
+        <td class="mono">${rr.opt!==null?fmtNumD(rr.opt, state.roundOptDecimals):'—'}${r.defaultMarkup?'<span title="Стандартна націнка +20% (немає даних в базі)" style="color:var(--up);">*</span>':''}</td>
+        <td class="mono">${rr.retail!==null?fmtNumD(rr.retail, state.roundRetailDecimals):'—'}${r.defaultMarkup?'<span title="Стандартна націнка +30% (немає даних в базі)" style="color:var(--up);">*</span>':''}</td>
         <td>${deltaHtml}</td>
         <td>${statusHtml}</td>
         <td>${actionHtml}</td>
@@ -1835,19 +1866,21 @@ document.getElementById('exportBtn').addEventListener('click', ()=>{
   let exportedNames = [];
 
   if(found.length>0){
-    const rows = found.map(r=>({
+    const rows = found.map(r=>{
+      const rr = roundedOptRetail(r);
+      return {
       'Код': r.code,
       'Назва': r.name,
       'Ціна прайсу': r.listPrice,
       'Знижка, %': r.discountPct||0,
       'Накидка (доставка), %': r.surchargePct||0,
-      'Ціна закупівлі': roundTo(r.newPrice, 2),
-      'Опт. ціна': r.newOpt!==null?roundTo(r.newOpt, state.roundOptDecimals):'',
-      'Розн. ціна': r.newRetail!==null?roundTo(r.newRetail, state.roundRetailDecimals):'',
+      'Ціна закупівлі': roundTo(r.newPrice, purchaseDecimals(r)),
+      'Опт. ціна': rr.opt!==null?rr.opt:'',
+      'Розн. ціна': rr.retail!==null?rr.retail:'',
       'Валюта': r.currency||'',
       '% зміни': r.pct!==null? Math.round(r.pct*100)/100 : '',
       'Статус': 'Знайдено',
-    }));
+    };});
     const ws = XLSX.utils.json_to_sheet(rows);
     ws['!cols'] = [{wch:16},{wch:50},{wch:12},{wch:10},{wch:16},{wch:14},{wch:12},{wch:12},{wch:9},{wch:10},{wch:22}];
     const wb = XLSX.utils.book_new();
@@ -1858,19 +1891,21 @@ document.getElementById('exportBtn').addEventListener('click', ()=>{
   }
 
   if(notFound.length>0){
-    const rows = notFound.map(r=>({
+    const rows = notFound.map(r=>{
+      const rr = roundedOptRetail(r);
+      return {
       'Код': r.code,
       'Назва': r.name,
       'Ціна прайсу': r.listPrice,
       'Знижка, %': r.discountPct||0,
       'Накидка (доставка), %': r.surchargePct||0,
-      'Ціна закупівлі': roundTo(r.newPrice, 2),
-      'Опт. ціна (станд. +20%)': r.newOpt!==null?roundTo(r.newOpt, state.roundOptDecimals):'',
-      'Розн. ціна (станд. +30%)': r.newRetail!==null?roundTo(r.newRetail, state.roundRetailDecimals):'',
+      'Ціна закупівлі': roundTo(r.newPrice, purchaseDecimals(r)),
+      'Опт. ціна (станд. +20%)': rr.opt!==null?rr.opt:'',
+      'Розн. ціна (станд. +30%)': rr.retail!==null?rr.retail:'',
       'Статус': r.noCode
         ? 'Без коду'
         : (r.status==='suggest' ? 'Є схожі варіанти (не підтверджено)' : 'Не знайдено в базі'),
-    }));
+    };});
     const ws = XLSX.utils.json_to_sheet(rows);
     ws['!cols'] = [{wch:16},{wch:50},{wch:12},{wch:10},{wch:16},{wch:14},{wch:20},{wch:20},{wch:26}];
     const wb = XLSX.utils.book_new();
