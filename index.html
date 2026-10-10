@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <style>
 :root{
   --bg:#0c1114;
@@ -619,11 +620,12 @@ body.locked .app{display:none;}
             <col style="width:86px;">    <!-- Нова опт -->
             <col style="width:86px;">    <!-- Нова розн. -->
             <col style="width:116px;">   <!-- Δ до бази -->
+            <col style="width:84px;">    <!-- Наявність -->
             <col style="width:140px;">   <!-- Статус -->
             <col style="width:160px;">   <!-- дії -->
           </colgroup>
           <thead><tr>
-            <th>Код</th><th>Назва</th><th>Ціна прайсу</th><th>Знижка/Накидка</th><th>Ціна закупівлі</th><th>Нова опт</th><th>Нова розн.</th><th>Δ до бази</th><th>Статус</th><th></th>
+            <th>Код</th><th>Назва</th><th>Ціна прайсу</th><th>Знижка/Накидка</th><th>Ціна закупівлі</th><th>Нова опт</th><th>Нова розн.</th><th>Δ до бази</th><th>Наявність</th><th>Статус</th><th></th>
           </tr></thead>
           <tbody id="resultTableBody"></tbody>
         </table>
@@ -921,7 +923,7 @@ async function deleteSupplierProfile(name){
   }catch(e){ console.warn('Не вдалося видалити профіль постачальника:', e); }
 }
 function emptySupplierProfile(name){
-  return { name, mapping:{code:-1,name:-1,name2:-1,price:-1}, headerLabels:{}, hasHeader:null,
+  return { name, mapping:{code:-1,name:-1,name2:-1,price:-1,avail:-1}, headerLabels:{}, hasHeader:null,
     discountPct:0, surchargePct:0, manualMatches:{}, ignoredNames:{}, updatedAt:null };
 }
 async function restoreLastBase(){
@@ -1272,7 +1274,12 @@ function escapeHtml(s){
    with a live preview and let them tag each one.
    ============================================================ */
 state.priceRawRows = [];      // raw 2D array of strings/values as loaded
-state.priceMapping = { code:-1, name:-1, name2:-1, price:-1 };
+state.priceMapping = { code:-1, name:-1, name2:-1, price:-1, avail:-1 };
+state.priceFile = null;       // File, з якого імпортовано прайс (потрібен для читання кольору ячейок); null при вставці
+state.priceSheetName = '';
+state.priceRowIdx = [];       // для кожного рядка priceRawRows — індекс рядка в аркуші (від початку діапазону)
+state.priceRowOffset = 0;     // номер першого рядка діапазону аркуша (0-based)
+state.priceColOffset = 0;     // номер першої колонки діапазону аркуша (0-based)
 state.priceDiscountPct = 0;   // % знижки постачальника, застосовується до всього прайсу
 state.priceSurchargePct = 0;  // % накидки (напр. доставка від постачальника), застосовується до всього прайсу
 state.roundOptDecimals = 2;   // знаків після коми для опт. ціни
@@ -1305,9 +1312,20 @@ function handlePriceFile(file){
       const wb = XLSX.read(data, {type:'array'});
       let sheetName = wb.SheetNames.find(n=>normalize(n).includes('прайс')) || wb.SheetNames[0];
       const ws = wb.Sheets[sheetName];
-      const rows = XLSX.utils.sheet_to_json(ws, {header:1, raw:true, defval:''})
-        .filter(row=>row.some(c=>String(c).trim()!==''));
+      const allRows = XLSX.utils.sheet_to_json(ws, {header:1, raw:true, defval:'', blankrows:true});
+      const rowIdx = [];
+      const rows = allRows.filter((row,i)=>{
+        const keep = row.some(c=>String(c).trim()!=='');
+        if(keep) rowIdx.push(i);
+        return keep;
+      });
       if(rows.length<1){ logTo('priceLog','Файл порожній.','err'); return; }
+      const rng = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']) : {s:{r:0,c:0}};
+      state.priceFile = file;
+      state.priceSheetName = sheetName;
+      state.priceRowIdx = rowIdx;
+      state.priceRowOffset = rng.s.r;
+      state.priceColOffset = rng.s.c;
       document.getElementById('priceFileHint').innerHTML = `Файл: <span class="fn">${escapeHtml(file.name)}</span>, лист «${escapeHtml(sheetName)}» — ${rows.length} рядків`;
       logTo('priceLog', `Прочитано ${rows.length} рядків з листа «${sheetName}». Вкажіть колонки нижче.`, 'ok');
       openMapping(rows, true);
@@ -1329,6 +1347,8 @@ document.getElementById('pasteContinueBtn').addEventListener('click', ()=>{
     return cols.map(s=>s.trim());
   });
   clearLog('priceLog');
+  state.priceFile = null; // при вставці з буфера кольори ячейок недоступні
+  state.priceRowIdx = [];
   logTo('priceLog', `Розпізнано ${rows.length} рядків. Вкажіть колонки нижче.`, 'ok');
   openMapping(rows, false);
 });
@@ -1369,7 +1389,7 @@ async function openMapping(rows, hasHeaderGuess){
   document.getElementById('priceSurchargeInput').value = '';
 
   // скидаємо мапінг перед (пере)застосуванням профілю постачальника чи авто-вгадування
-  state.priceMapping = { code:-1, name:-1, name2:-1, price:-1 };
+  state.priceMapping = { code:-1, name:-1, name2:-1, price:-1, avail:-1 };
 
   const profile = state.currentSupplierProfile;
   if(profile && profile.mapping && (profile.mapping.code>=0 || profile.mapping.name>=0 || profile.mapping.price>=0)){
@@ -1396,8 +1416,8 @@ async function openMapping(rows, hasHeaderGuess){
 function applySavedMappingToRows(profile, rows, hasHeader){
   const headerRow = hasHeader ? rows[0] : null;
   const colCount = Math.max(...rows.map(r=>r.length));
-  const roles = ['code','name','name2','price'];
-  const mapping = { code:-1, name:-1, name2:-1, price:-1 };
+  const roles = ['code','name','name2','price','avail'];
+  const mapping = { code:-1, name:-1, name2:-1, price:-1, avail:-1 };
   const used = new Set();
   roles.forEach(role=>{
     const savedIdx = profile.mapping ? profile.mapping[role] : -1;
@@ -1414,6 +1434,7 @@ function applySavedMappingToRows(profile, rows, hasHeader){
     if(targetCol===-1 && savedIdx<colCount && !used.has(savedIdx)) targetCol = savedIdx;
     if(targetCol!==-1){ mapping[role]=targetCol; used.add(targetCol); }
   });
+  if(!state.priceFile) mapping.avail = -1; // кольори доступні лише при імпорті файлу
   state.priceMapping = mapping;
 }
 
@@ -1451,6 +1472,7 @@ function renderMappingUI(){
           <option value="name" ${mapping.name===c?'selected':''}>Назва товару</option>
           <option value="name2" ${mapping.name2===c?'selected':''}>Назва (частина 2)</option>
           <option value="price" ${mapping.price===c?'selected':''}>Ціна (нова)</option>
+          ${state.priceFile ? `<option value="avail" ${mapping.avail===c?'selected':''}>Наявність (за кольором)</option>` : ''}
         </select>
       </th>`;
   }
@@ -1474,11 +1496,13 @@ function renderMappingUI(){
       if(role==='name') mapping.name = col;
       if(role==='name2') mapping.name2 = col;
       if(role==='price') mapping.price = col;
+      if(role==='avail') mapping.avail = col;
       if(role===''){
         if(mapping.code===col) mapping.code=-1;
         if(mapping.name===col) mapping.name=-1;
         if(mapping.name2===col) mapping.name2=-1;
         if(mapping.price===col) mapping.price=-1;
+        if(mapping.avail===col) mapping.avail=-1;
       }
       // clear duplicate assignment on other selects
       table.querySelectorAll('.map-select').forEach(other=>{
@@ -1490,6 +1514,7 @@ function renderMappingUI(){
           if(role==='name' && mapping.name===otherCol) mapping.name=-1;
           if(role==='name2' && mapping.name2===otherCol) mapping.name2=-1;
           if(role==='price' && mapping.price===otherCol) mapping.price=-1;
+          if(role==='avail' && mapping.avail===otherCol) mapping.avail=-1;
         }
       });
       updateMappingHint();
@@ -1504,6 +1529,7 @@ function updateMappingHint(){
   const applyBtn = document.getElementById('applyMappingBtn');
   const problems = [];
   if(m.price<0) problems.push('оберіть колонку «Ціна»');
+  if(m.avail>=0 && !state.priceFile) problems.push('«Наявність за кольором» працює лише при імпорті файлу .xlsx');
   if(m.code<0 && m.name<0) problems.push('оберіть хоча б одну з колонок «Код» або «Назва» (потрібно для зіставлення з базою)');
   if(problems.length){
     hint.innerHTML = '⚠ '+problems.join('; ')+'.';
@@ -1528,11 +1554,82 @@ document.getElementById('remapBtn').addEventListener('click', ()=>{
   renderMappingUI();
 });
 
-document.getElementById('applyMappingBtn').addEventListener('click', ()=>{
+/* ── Наявність за кольором ячейки (ExcelJS) ── */
+const THEME_PALETTE = ['FFFFFF','000000','E7E6E6','44546A','4472C4','ED7D31','A5A5A5','FFC000','5B9BD5','70AD47']; // стандартна тема Office
+const INDEXED_RED = {2:'FF0000', 10:'FF0000', 16:'800000'};
+function applyTint(hex, tint){
+  if(!tint) return hex;
+  let r=parseInt(hex.slice(0,2),16), g=parseInt(hex.slice(2,4),16), b=parseInt(hex.slice(4,6),16);
+  const f = c => Math.round(tint<0 ? c*(1+tint) : c*(1-tint)+255*tint);
+  return [f(r),f(g),f(b)].map(v=>Math.min(255,Math.max(0,v)).toString(16).padStart(2,'0')).join('');
+}
+function isRedRGB(hex){
+  const r=parseInt(hex.slice(0,2),16)/255, g=parseInt(hex.slice(2,4),16)/255, b=parseInt(hex.slice(4,6),16)/255;
+  const max=Math.max(r,g,b), min=Math.min(r,g,b), d=max-min;
+  const l=(max+min)/2;
+  if(d===0) return false; // сірий/білий/чорний
+  const s = d/(1-Math.abs(2*l-1));
+  let h;
+  if(max===r) h=((g-b)/d)%6; else if(max===g) h=(b-r)/d+2; else h=(r-g)/d+4;
+  h*=60; if(h<0) h+=360;
+  return (h<=15 || h>=345) && s>=0.25 && l>=0.15 && l<=0.93;
+}
+function cellFillIsRed(cell){
+  const fill = cell && cell.fill;
+  if(!fill || fill.type!=='pattern' || !fill.pattern || fill.pattern==='none') return false;
+  const c = fill.fgColor;
+  if(!c) return false;
+  let hex = null;
+  if(c.argb){ hex = String(c.argb).slice(-6); }
+  else if(c.theme!==undefined){ const base = THEME_PALETTE[c.theme]; if(base) hex = applyTint(base, c.tint||0); }
+  else if(c.indexed!==undefined){ hex = INDEXED_RED[c.indexed] || null; }
+  if(!hex || hex.length!==6) return false;
+  return isRedRGB(hex.toUpperCase());
+}
+async function readAvailabilityColors(file, sheetName, excelRows, excelCol){
+  // excelRows: масив 1-based номерів рядків аркуша; excelCol: 1-based номер колонки
+  const buf = await file.arrayBuffer();
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buf);
+  const ws = wb.getWorksheet(sheetName) || wb.worksheets[0];
+  if(!ws) throw new Error('не вдалося знайти аркуш у файлі');
+  return excelRows.map(rn => cellFillIsRed(ws.getRow(rn).getCell(excelCol)) ? '-' : '+');
+}
+
+document.getElementById('applyMappingBtn').addEventListener('click', async ()=>{
   const rows = state.priceRawRows;
   const hasHeader = document.getElementById('hasHeaderCheck').checked;
   const m = state.priceMapping;
   const dataStart = hasHeader ? 1 : 0;
+
+  // наявність за кольором: читаємо заливку ячеек стовпця (лише для .xlsx-файлу)
+  let availByRow = null;
+  if(m.avail>=0){
+    if(!state.priceFile){ toast('Наявність за кольором працює лише при імпорті файлу .xlsx (не при вставці)', true); return; }
+    if(!/\.xlsx$|\.xlsm$/i.test(state.priceFile.name)){
+      toast('Колір ячеек читається лише з .xlsx. Збережіть файл як .xlsx і завантажте знову', true); return;
+    }
+    const applyBtn = document.getElementById('applyMappingBtn');
+    applyBtn.disabled = true;
+    logTo('priceLog', 'Читаю кольори ячеек для стовпця «Наявність»…');
+    try{
+      const excelRows = [];
+      for(let r=dataStart;r<rows.length;r++) excelRows.push(state.priceRowOffset + state.priceRowIdx[r] + 1);
+      const excelCol = state.priceColOffset + m.avail + 1;
+      const flags = await readAvailabilityColors(state.priceFile, state.priceSheetName, excelRows, excelCol);
+      availByRow = new Map();
+      for(let i=0;i<flags.length;i++) availByRow.set(dataStart+i, flags[i]);
+      const minus = flags.filter(f=>f==='-').length;
+      logTo('priceLog', `Кольори прочитано: «-» (червоні) — ${minus}, «+» — ${flags.length-minus}.`, 'ok');
+    }catch(err){
+      console.error(err);
+      logTo('priceLog', 'Не вдалося прочитати кольори: '+err.message, 'err');
+      toast('Не вдалося прочитати кольори ячеек', true);
+      applyBtn.disabled = false;
+      return;
+    }
+    applyBtn.disabled = false;
+  }
 
   const discountOn = document.getElementById('priceDiscountCheck').checked;
   let discountPct = discountOn ? parseNum(document.getElementById('priceDiscountInput').value) : 0;
@@ -1563,7 +1660,7 @@ document.getElementById('applyMappingBtn').addEventListener('click', ()=>{
     let price = listPrice;
     if(state.priceDiscountPct>0) price = price*(1-state.priceDiscountPct/100);
     if(state.priceSurchargePct>0) price = price*(1+state.priceSurchargePct/100);
-    list.push({code, name, price, listPrice, discountPct: state.priceDiscountPct, surchargePct: state.priceSurchargePct});
+    list.push({code, name, price, listPrice, discountPct: state.priceDiscountPct, surchargePct: state.priceSurchargePct, avail: availByRow ? availByRow.get(r) : ''});
   }
   if(list.length===0){ toast('Не вдалося зібрати жодного рядка з обраними колонками', true); return; }
 
@@ -1579,12 +1676,12 @@ document.getElementById('applyMappingBtn').addEventListener('click', ()=>{
   if(state.currentSupplier){
     const headerRow = hasHeader ? rows[0] : null;
     const headerLabels = {};
-    ['code','name','name2','price'].forEach(role=>{
+    ['code','name','name2','price','avail'].forEach(role=>{
       const col = m[role];
       if(col>=0 && headerRow) headerLabels[role] = normalize(headerRow[col]);
     });
     const profile = state.currentSupplierProfile || emptySupplierProfile(state.currentSupplier);
-    profile.mapping = { code:m.code, name:m.name, name2:m.name2, price:m.price };
+    profile.mapping = { code:m.code, name:m.name, name2:m.name2, price:m.price, avail:m.avail };
     profile.headerLabels = headerLabels;
     profile.hasHeader = hasHeader;
     profile.discountPct = state.priceDiscountPct;
@@ -1600,7 +1697,9 @@ document.getElementById('clearPriceBtn').addEventListener('click', ()=>{
   document.getElementById('pricePasteArea').value='';
   state.priceRows = [];
   state.priceRawRows = [];
-  state.priceMapping = { code:-1, name:-1, name2:-1, price:-1 };
+  state.priceFile = null;
+  state.priceRowIdx = [];
+  state.priceMapping = { code:-1, name:-1, name2:-1, price:-1, avail:-1 };
   state.priceDiscountPct = 0;
   document.getElementById('priceDiscountCheck').checked = false;
   document.getElementById('priceDiscountWrap').style.display = 'none';
@@ -1650,11 +1749,14 @@ document.getElementById('compareBtn').addEventListener('click', ()=>{
     // isIgnored: користувач раніше явно натиснув "Забути" для цієї назви — жодне з джерел
     // вище навіть не перевірялось (base лишився null), рядок завжди йде як "не знайдено"
     if(!base){
-      results.push(buildResultRow(pr.code, pr.name, pr.price, null, !pr.code, pr.listPrice, pr.discountPct, pr.surchargePct, pr.name));
+      const row = buildResultRow(pr.code, pr.name, pr.price, null, !pr.code, pr.listPrice, pr.discountPct, pr.surchargePct, pr.name);
+      row.avail = pr.avail || '';
+      results.push(row);
     }else{
       const row = buildResultRow(matchedCode, base.name || pr.name, pr.price, base, false, pr.listPrice, pr.discountPct, pr.surchargePct, pr.name);
       if(matchSource==='codeInName') row.matchedByCodeInName = true;
       if(matchSource==='supplier') row.matchedBySupplierMemory = true;
+      row.avail = pr.avail || '';
       results.push(row);
     }
   }
@@ -1809,7 +1911,7 @@ function renderResults(){
       // колонка робила назви товарів нечитабельними, а колонка "Назва" простоювала пустою
       tr.innerHTML = `
         <td class="mono code-cell">${escapeHtml(r.code)}</td>
-        <td colspan="9">
+        <td colspan="10">
           <div style="display:flex;align-items:flex-start;gap:18px;flex-wrap:wrap;">
             <div style="flex:0 0 220px;max-width:280px;">
               <div style="color:var(--text-muted);">${escapeHtml(r.name)||'<span style=\"color:var(--text-dim)\">—</span>'}</div>
@@ -1830,6 +1932,7 @@ function renderResults(){
         <td class="mono">${rr.opt!==null?fmtNumD(rr.opt, state.roundOptDecimals):'—'}${r.defaultMarkup?'<span title="Стандартна націнка +20% (немає даних в базі)" style="color:var(--up);">*</span>':''}</td>
         <td class="mono">${rr.retail!==null?fmtNumD(rr.retail, state.roundRetailDecimals):'—'}${r.defaultMarkup?'<span title="Стандартна націнка +30% (немає даних в базі)" style="color:var(--up);">*</span>':''}</td>
         <td>${deltaHtml}</td>
+        <td class="mono" style="font-weight:600;text-align:center;color:${r.avail==='-'?'var(--danger)':(r.avail==='+'?'var(--accent)':'var(--text-dim)')};">${r.avail||'—'}</td>
         <td>${statusHtml}</td>
         <td>${actionHtml}</td>
       `;
@@ -1933,12 +2036,13 @@ document.getElementById('exportBtn').addEventListener('click', ()=>{
       'Ціна закупівлі': roundTo(r.newPrice, purchaseDecimals(r)),
       'Опт. ціна': rr.opt!==null?rr.opt:'',
       'Розн. ціна': rr.retail!==null?rr.retail:'',
+      'Наявність': r.avail||'',
       'Валюта': r.currency||'',
       '% зміни': r.pct!==null? Math.round(r.pct*100)/100 : '',
       'Статус': 'Знайдено',
     };});
     const ws = XLSX.utils.json_to_sheet(rows);
-    ws['!cols'] = [{wch:16},{wch:50},{wch:12},{wch:10},{wch:16},{wch:14},{wch:12},{wch:12},{wch:9},{wch:10},{wch:22}];
+    ws['!cols'] = [{wch:16},{wch:50},{wch:12},{wch:10},{wch:16},{wch:14},{wch:12},{wch:12},{wch:11},{wch:9},{wch:10},{wch:22}];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Переоцінка');
     const fname = `Переоцінка_${supplierPart}${dateStr}.xlsx`;
@@ -1958,12 +2062,13 @@ document.getElementById('exportBtn').addEventListener('click', ()=>{
       'Ціна закупівлі': roundTo(r.newPrice, purchaseDecimals(r)),
       'Опт. ціна (станд. +20%)': rr.opt!==null?rr.opt:'',
       'Розн. ціна (станд. +30%)': rr.retail!==null?rr.retail:'',
+      'Наявність': r.avail||'',
       'Статус': r.noCode
         ? 'Без коду'
         : (r.status==='suggest' ? 'Є схожі варіанти (не підтверджено)' : 'Не знайдено в базі'),
     };});
     const ws = XLSX.utils.json_to_sheet(rows);
-    ws['!cols'] = [{wch:16},{wch:50},{wch:12},{wch:10},{wch:16},{wch:14},{wch:20},{wch:20},{wch:26}];
+    ws['!cols'] = [{wch:16},{wch:50},{wch:12},{wch:10},{wch:16},{wch:14},{wch:20},{wch:20},{wch:11},{wch:26}];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Не знайдено в базі');
     const fname = `Не_знайдено_в_базі_${supplierPart}${dateStr}.xlsx`;
@@ -2067,6 +2172,7 @@ function applyMatchDecision(idx, candidates){
     rebuilt.status = 'ok';
     rebuilt.matchedByName = true;
     rebuilt.matchScore = top.score;
+    rebuilt.avail = r.avail || '';
     state.results[idx] = rebuilt;
     return 'auto';
   }
@@ -2151,6 +2257,7 @@ function acceptCandidate(idx, code){
   rebuilt.status = 'ok';
   rebuilt.matchedByName = true;
   rebuilt.matchScore = cand.score;
+  rebuilt.avail = r.avail || '';
   state.results[idx] = rebuilt;
   rememberSupplierMatch(origName, cand.item.code);
   renderResults();
@@ -2242,6 +2349,7 @@ function selectManualItem(code){
   rebuilt.status = 'ok';
   rebuilt.matchedByName = false;
   rebuilt.matchedManually = true;
+  rebuilt.avail = r.avail || '';
   state.results[idx] = rebuilt;
   rememberSupplierMatch(origName, item.code);
   closeManualSearch();
@@ -2454,7 +2562,7 @@ function rowsToSheet(headers, rows){
   return XLSX.utils.aoa_to_sheet(aoa);
 }
 function exportSuppliersXlsx(profiles, dateStr){
-  const mainHeaders = ['Постачальник','Знижка, %','Накидка, %','Колонка: Код','Колонка: Назва','Колонка: Назва2','Колонка: Ціна','Є шапка','Підписи шапки (JSON)','Оновлено'];
+  const mainHeaders = ['Постачальник','Знижка, %','Накидка, %','Колонка: Код','Колонка: Назва','Колонка: Назва2','Колонка: Ціна','Колонка: Наличие','Є шапка','Підписи шапки (JSON)','Оновлено'];
   const mainRows = profiles.map(p=>({
     'Постачальник': p.name,
     'Знижка, %': p.discountPct||0,
@@ -2463,6 +2571,7 @@ function exportSuppliersXlsx(profiles, dateStr){
     'Колонка: Назва': p.mapping ? p.mapping.name : -1,
     'Колонка: Назва2': p.mapping ? p.mapping.name2 : -1,
     'Колонка: Ціна': p.mapping ? p.mapping.price : -1,
+    'Колонка: Наличие': (p.mapping && p.mapping.avail!==undefined) ? p.mapping.avail : -1,
     'Є шапка': p.hasHeader===true ? 'так' : (p.hasHeader===false ? 'ні' : ''),
     'Підписи шапки (JSON)': JSON.stringify(p.headerLabels||{}),
     'Оновлено': p.updatedAt || '',
@@ -2502,6 +2611,7 @@ async function parseSuppliersXlsx(file){
       mapping: {
         code: Number(r['Колонка: Код']), name: Number(r['Колонка: Назва']),
         name2: Number(r['Колонка: Назва2']), price: Number(r['Колонка: Ціна']),
+        avail: (r['Колонка: Наличие']===undefined||r['Колонка: Наличие']==='') ? -1 : Number(r['Колонка: Наличие']),
       },
       hasHeader: r['Є шапка']==='так' ? true : (r['Є шапка']==='ні' ? false : null),
       headerLabels, manualMatches:{}, ignoredNames:{}, updatedAt: r['Оновлено']||null,
