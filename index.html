@@ -266,6 +266,8 @@ tbody tr.row-ai{background:var(--warn-soft);}
 td.editable{cursor:pointer;}
 td.editable:hover{background:var(--accent-soft);outline:1px dashed var(--accent-dim);outline-offset:-2px;}
 td.manual-cell{color:var(--accent);font-weight:600;}
+td .mk{font-size:10.5px;font-weight:400;color:var(--text-dim);line-height:1.2;margin-top:1px;}
+td.manual-cell .mk{color:var(--accent-dim);}
 td.editable input.cell-edit{
   width:100%;min-width:0;padding:4px 6px;font-size:12px;text-align:right;border-radius:5px;
 }
@@ -1013,6 +1015,13 @@ function purchaseDecimals(r){
   // ціна закупівлі: якщо в прайсі було 3 знаки після коми — лишаємо 3,
   // інакше стандартні 2 (щоб не змінювати поведінку для звичайних прайсів)
   return Math.max(2, decimalsOf(r ? r.listPrice : 0));
+}
+function markupLabel(r, field){
+  // поточна застосована націнка (до округлення) відносно ціни закупівлі, напр. "+25%"
+  const raw = field==='opt' ? overrideValue(r.ovOpt, r.newPrice, r.newOpt) : overrideValue(r.ovRetail, r.newPrice, r.newRetail);
+  if(raw===null || raw===undefined || isNaN(raw) || !(r.newPrice>0)) return '';
+  const p = Math.round((raw/r.newPrice-1)*1000)/10;
+  return (p>0?'+':'') + String(p).replace('.',',') + '%';
 }
 function overrideValue(ov, basePrice, fallback){
   // ручна/масова націнка: {type:'pct', value} — % до ціни закупівлі; {type:'price', value} — точна ціна
@@ -1979,8 +1988,8 @@ function renderResults(){
         <td class="mono">${fmtPrice(r.listPrice)}</td>
         <td class="mono">${[r.discountPct>0?('-'+r.discountPct+'%'):'', r.surchargePct>0?('+'+r.surchargePct+'%'):''].filter(Boolean).join(' / ') || '—'}</td>
         <td class="mono">${fmtNumD(roundTo(r.newPrice, purchaseDecimals(r)), purchaseDecimals(r))}</td>
-        <td class="mono editable${r.ovOpt?' manual-cell':''}" data-edit="opt" data-idx="${idx}" title="${r.ovOpt?(r.ovOpt.type==='pct'?'Націнка '+r.ovOpt.value+'%':'Ціна задана вручну'):'Клік — змінити націнку/ціну'}">${rr.opt!==null?fmtNumD(rr.opt, state.roundOptDecimals):'—'}${(r.defaultMarkup && !r.ovOpt)?'<span title="Стандартна націнка +20% (немає даних в базі)" style="color:var(--up);">*</span>':''}</td>
-        <td class="mono editable${r.ovRetail?' manual-cell':''}" data-edit="retail" data-idx="${idx}" title="${r.ovRetail?(r.ovRetail.type==='pct'?'Націнка '+r.ovRetail.value+'%':'Ціна задана вручну'):'Клік — змінити націнку/ціну'}">${rr.retail!==null?fmtNumD(rr.retail, state.roundRetailDecimals):'—'}${(r.defaultMarkup && !r.ovRetail)?'<span title="Стандартна націнка +30% (немає даних в базі)" style="color:var(--up);">*</span>':''}</td>
+        <td class="mono editable${r.ovOpt?' manual-cell':''}" data-edit="opt" data-idx="${idx}" title="${r.ovOpt?(r.ovOpt.type==='pct'?'Націнка '+r.ovOpt.value+'%':'Ціна задана вручну'):'Клік — змінити націнку/ціну'}">${rr.opt!==null?fmtNumD(rr.opt, state.roundOptDecimals):'—'}${(r.defaultMarkup && !r.ovOpt)?'<span title="Стандартна націнка +20% (немає даних в базі)" style="color:var(--up);">*</span>':''}<div class="mk">${markupLabel(r,'opt')}</div></td>
+        <td class="mono editable${r.ovRetail?' manual-cell':''}" data-edit="retail" data-idx="${idx}" title="${r.ovRetail?(r.ovRetail.type==='pct'?'Націнка '+r.ovRetail.value+'%':'Ціна задана вручну'):'Клік — змінити націнку/ціну'}">${rr.retail!==null?fmtNumD(rr.retail, state.roundRetailDecimals):'—'}${(r.defaultMarkup && !r.ovRetail)?'<span title="Стандартна націнка +30% (немає даних в базі)" style="color:var(--up);">*</span>':''}<div class="mk">${markupLabel(r,'retail')}</div></td>
         <td>${deltaHtml}</td>
         <td class="mono" style="font-weight:600;text-align:center;color:${r.avail==='-'?'var(--danger)':(r.avail==='+'?'var(--accent)':'var(--text-dim)')};">${r.avail||'—'}</td>
         <td>${statusHtml}</td>
